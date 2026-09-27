@@ -35,3 +35,5 @@
 当前开发环境没有安装 Lightroom Classic，因此 Lua 已做静态语法检查，后端任务协议已用模拟插件完成往返测试，但尚未在 Adobe 宿主中验证各版本的 Develop 参数名、导出设置和插件菜单加载。首次实机请在虚拟副本上测试，尤其检查撤销历史、白平衡数值和 PNG/TIFF 导出。
 
 故障记录（2026-09-27）：首次实机安装时插件目录被命名为 `lrc-plugin.Irplugin`（后缀为大写 `I`），LrC 直接拒绝添加文件夹；该副本内的 `Info.lua` 还是旧的 `LrSdkVersion = 11.0` 且缺少 `LrToolkitIdentifier`。现仓库内只保留根目录下的 `aiLr.lrplugin` 一份插件，请不要再手工复制改名副本，否则两份清单会不同步。
+
+故障记录（2026-09-27，第 2 条）：实机点击 `aiLr: Start/Stop Web Bridge` 后 LrC 弹出警告「Yielding is not allowed within a C or metamethod call」。原因是 `poll_bridge` / `run_job` 原来用标准 Lua `pcall` 包裹，而 `LrHttp.get/post`、`LrTasks.sleep`、`LrApplicationView.switchToModule` 与 `LrExportSession` 的 renditions 迭代都必须让出（yield）当前任务，`pcall` 属于 C 调用边界，其中禁止 yield。现已改为 `LrTasks.pcall`（SDK 提供的允许 yield 的保护调用，见 `Bridge.lua` 中的 `protected_call`）。若再次出现同类提示，先排查是否新引入了裸 `pcall` / `xpcall`，或在 `LrView` 绑定、菜单回调等非任务（non-task）上下文里直接调用了会 yield 的函数。修改 Lua 后需在 LrC「增效工具管理器」里重新加载插件（或重启 LrC），否则运行的仍是旧代码。

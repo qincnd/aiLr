@@ -12,6 +12,31 @@ local LrPrefs = import "LrPrefs"
 local API = "http://127.0.0.1:8000/api/lightroom"
 local prefs = LrPrefs.prefsForPlugin()
 
+-- Bridge work has to suspend the task: LrHttp.get/post, LrTasks.sleep,
+-- LrApplicationView.switchToModule and the LrExportSession renditions all yield.
+-- Standard Lua pcall runs the callee across a C-call boundary, where yielding is
+-- forbidden, so Lightroom fails with "Yielding is not allowed within a C or
+-- metamethod call". LrTasks.pcall is the SDK protected call that keeps yielding allowed.
+local function protected_call(target, ...)
+    if LrTasks.pcall then
+        return LrTasks.pcall(target, ...)
+    end
+    -- Hosts without LrTasks.pcall: forward the callee's yields to the task coroutine.
+    local unpackValues = table.unpack or unpack
+    local thread = coroutine.create(target)
+    local arguments = { ... }
+    while true do
+        local ok, result = coroutine.resume(thread, unpackValues(arguments))
+        if not ok then
+            return false, result
+        end
+        if coroutine.status(thread) == "dead" then
+            return true, result
+        end
+        arguments = { coroutine.yield(result) }
+    end
+end
+
 local SETTING_NAMES = {
     Exposure2012 = "Exposure",
     Contrast2012 = "Contrast",
@@ -209,7 +234,7 @@ local function poll_bridge()
         if response_status(headers) == 200 and body and body ~= "" then
             local job = decode_job(body)
             if job then
-                local ok, message = pcall(run_job, job)
+                local ok, message = protected_call(run_job, job)
                 if not ok then
                     post_job_failure(job, message)
                 end
@@ -225,7 +250,7 @@ if prefs.aiLrBridgeRunning then
 else
     prefs.aiLrBridgeRunning = true
     LrTasks.startAsyncTask(function()
-        local ok, message = pcall(poll_bridge)
+        local ok, message = protected_call(poll_bridge)
         prefs.aiLrBridgeRunning = false
         if not ok then
             LrDialogs.message("aiLr Bridge", tostring(message), "warning")

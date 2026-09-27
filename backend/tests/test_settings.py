@@ -5,7 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.settings import SettingsValidationError, validate_develop_settings
-from app.services.llm import _parse_suggestion
+from app.services.llm import _ollama_response_schema, _parse_suggestion
 
 
 class DevelopSettingsTests(unittest.TestCase):
@@ -32,6 +32,16 @@ class DevelopSettingsTests(unittest.TestCase):
             _parse_suggestion("not json")
         with self.assertRaises(SettingsValidationError):
             _parse_suggestion('{"summary":"bad","settings":{"Exposure2012":12}}')
+        with self.assertRaises(SettingsValidationError):
+            _parse_suggestion('{"summary":"bad","settings":{"Temperature":0.5}}')
+
+    def test_ollama_schema_constrains_temperature_to_kelvin_range(self) -> None:
+        schema = _ollama_response_schema()
+        temperature = schema["properties"]["settings"]["properties"]["Temperature"]
+
+        self.assertEqual(temperature["minimum"], 2000.0)
+        self.assertEqual(temperature["maximum"], 50000.0)
+        self.assertIn("Kelvin", temperature["description"])
 
 
 if __name__ == "__main__":

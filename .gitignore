@@ -2,8 +2,10 @@
 __pycache__/
 *.py[cod]
 .env
+backend/data/model_config.json
 node_modules/
 frontend/dist/
+frontend/tsconfig.tsbuildinfo
 .vite/
 *.log
 .DS_Store

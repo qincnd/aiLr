@@ -7,8 +7,6 @@
 - `Info.lua`：插件清单。`LrSdkVersion = 6.0`、`LrToolkitIdentifier = "com.ailr.lightroom.bridge"`，并把 `LrLibraryMenuItems` 的菜单项绑定到 `Bridge.lua`。
 - `Bridge.lua`：菜单回调。该文件在**点击菜单项时**执行顶层代码，与 Adobe 官方样例（`helloworld.lrdevplugin`、`custommetadatasample.lrdevplugin`）一致，不需要 `return function`。
 
-> 目录名大小写要点：插件目录名必须以小写 `.lrplugin` 结尾。LrC 的“添加增效工具”对话框会严格比较这个后缀，`.Irplugin`（大写 `I`）或 `.lrplugin ` 之类的名字都会被直接拒绝并提示“请选择一个名称以 '.lrplugin' 结尾的文件夹”。Windows 资源管理器里 `I` 和 `l` 外形几乎一样，请用重命名对话框直接输入名称确认。
-
 ## 安装与启动
 
 1. 保持 aiLr FastAPI 后端运行在 `http://127.0.0.1:8000`。

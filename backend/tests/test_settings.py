@@ -7,10 +7,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.settings import (
     MODEL_SETTING_KEYS,
     SettingsValidationError,
+    VIGNETTE_SETTING_KEYS,
     develop_controls_payload,
     model_keys_for,
+    review_develop_settings,
+    tame_vignette_artifacts,
     validate_develop_settings,
 )
+
+MASK_KEYS = set(VIGNETTE_SETTING_KEYS)
 from app.services.llm import _build_system_prompt, _ollama_response_schema, _parse_suggestion
 
 
@@ -81,6 +86,164 @@ class DevelopSettingsTests(unittest.TestCase):
             with self.assertRaises(SettingsValidationError):
                 validate_develop_settings(settings)
 
+    def test_review_reports_overflow_instead_of_raising(self) -> None:
+        accepted, problems = review_develop_settings(
+            {
+                "Exposure2012": 8,
+                "Temperature": 5600,
+                "MadeUpControl": 1,
+                "AutoTone": "true",
+                "ToneCurveName": "Bogus",
+            }
+        )
+
+        # Only the values Lightroom accepts survive; the rest comes back as reasons
+        # the suggestion chain can send to the model and show to the user.
+        self.assertEqual(accepted, {"Temperature": 5600.0})
+        self.assertEqual(len(problems), 4)
+        self.assertIn("参数 Exposure2012 超出范围 [-5, 5]: 8", problems)
+        self.assertIn("不支持的 Lightroom 参数: MadeUpControl", problems)
+        self.assertIn("参数 AutoTone 必须是 true 或 false", problems)
+        self.assertTrue(
+            any(problem.startswith("参数 ToneCurveName 只接受以下取值") for problem in problems)
+        )
+
+    def test_review_keeps_a_legal_answer_untouched(self) -> None:
+        self.assertEqual(
+            review_develop_settings({"Exposure2012": 0.5, "AutoTone": True}),
+            ({"Exposure2012": 0.5, "AutoTone": True}, []),
+        )
+
+    def test_review_flags_an_empty_answer(self) -> None:
+        self.assertEqual(review_develop_settings({}), ({}, ["至少需要一个调色参数"]))
+
+    def test_validate_still_raises_the_first_problem(self) -> None:
+        with self.assertRaises(SettingsValidationError) as raised:
+            validate_develop_settings({"Exposure2012": 8, "Vibrance": 10})
+
+        self.assertIn("超出范围", str(raised.exception))
+
+    def test_review_guards_a_vignette_that_would_draw_a_circle(self) -> None:
+        accepted, problems = review_develop_settings(
+            {
+                "PostCropVignetteAmount": -80,
+                "PostCropVignetteFeather": 0,
+                "PostCropVignetteRoundness": 100,
+                "PostCropVignetteMidpoint": 50,
+                "Vibrance": 10,
+            },
+            guard_vignette=True,
+        )
+
+        # These are legal Lightroom values, so they stay in the answer; the guard only
+        # says why they would render as a circular mask on the photo.
+        self.assertEqual(accepted["PostCropVignetteRoundness"], 100.0)
+        self.assertEqual(accepted["Vibrance"], 10.0)
+        self.assertEqual(len(problems), 3)
+        self.assertTrue(
+            any(item.startswith("参数 PostCropVignetteRoundness 的值 100") for item in problems)
+        )
+        self.assertTrue(any("羽化为 0" in item for item in problems))
+        self.assertTrue(any(item.startswith("参数 PostCropVignetteAmount 的值 -80") for item in problems))
+        self.assertTrue(all("请改到" in item for item in problems))
+
+    def test_review_guards_the_paint_overlay_vignette_style(self) -> None:
+        accepted, problems = review_develop_settings(
+            {"PostCropVignetteStyle": 3, "PostCropVignetteAmount": -20},
+            guard_vignette=True,
+        )
+
+        self.assertEqual(accepted["PostCropVignetteStyle"], 3)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("绘制叠加", problems[0])
+
+    def test_review_keeps_a_soft_vignette_untouched(self) -> None:
+        self.assertEqual(
+            review_develop_settings(
+                {
+                    "PostCropVignetteAmount": -30,
+                    "PostCropVignetteFeather": 55,
+                    "PostCropVignetteRoundness": -40,
+                    "PostCropVignetteMidpoint": 45,
+                    "PostCropVignetteStyle": 2,
+                },
+                guard_vignette=True,
+            ),
+            (
+                {
+                    "PostCropVignetteAmount": -30.0,
+                    "PostCropVignetteFeather": 55.0,
+                    "PostCropVignetteRoundness": -40.0,
+                    "PostCropVignetteMidpoint": 45.0,
+                    "PostCropVignetteStyle": 2,
+                },
+                [],
+            ),
+        )
+
+    def test_review_ignores_a_vignette_amount_that_is_invisible(self) -> None:
+        # A normalized 0.2 draws nothing at all, so the other knobs cannot create a
+        # visible shape and the answer does not need another model turn.
+        self.assertEqual(
+            review_develop_settings(
+                {"PostCropVignetteAmount": 0.2, "PostCropVignetteRoundness": 100},
+                guard_vignette=True,
+            ),
+            ({"PostCropVignetteAmount": 0.2, "PostCropVignetteRoundness": 100.0}, []),
+        )
+
+    def test_the_vignette_guard_is_off_for_hand_made_values(self) -> None:
+        settings = {"PostCropVignetteAmount": -90, "PostCropVignetteRoundness": 100}
+
+        # The web sliders, the bridge and the MCP tools keep sending exactly what was
+        # asked for, so only the suggestion path turns the guard on.
+        self.assertEqual(
+            review_develop_settings(settings),
+            ({"PostCropVignetteAmount": -90.0, "PostCropVignetteRoundness": 100.0}, []),
+        )
+        self.assertEqual(validate_develop_settings(settings)["PostCropVignetteRoundness"], 100.0)
+
+    def test_tame_vignette_artifacts_clamps_the_circle(self) -> None:
+        tamed, changes = tame_vignette_artifacts(
+            {
+                "PostCropVignetteAmount": -80,
+                "PostCropVignetteFeather": 0,
+                "PostCropVignetteRoundness": 100,
+                "PostCropVignetteMidpoint": 100,
+                "PostCropVignetteStyle": 3,
+                "GrainAmount": 15,
+            }
+        )
+
+        self.assertEqual(
+            tamed,
+            {
+                "PostCropVignetteAmount": -60.0,
+                "PostCropVignetteFeather": 25.0,
+                "PostCropVignetteRoundness": 25.0,
+                "PostCropVignetteMidpoint": 80.0,
+                "GrainAmount": 15.0,
+            },
+        )
+        self.assertEqual(len(changes), 5)
+        self.assertTrue(any("绘制叠加" in item for item in changes))
+        self.assertTrue(
+            any(
+                item.startswith("PostCropVignetteRoundness 由 100 收敛为 25")
+                for item in changes
+            )
+        )
+
+    def test_tame_vignette_artifacts_leaves_a_soft_vignette_alone(self) -> None:
+        clean = {"PostCropVignetteAmount": -40, "PostCropVignetteFeather": 50}
+
+        tamed, changes = tame_vignette_artifacts(clean)
+
+        self.assertEqual(tamed, clean)
+        self.assertEqual(changes, [])
+        # The caller's own dict is never edited in place.
+        self.assertIsNot(tamed, clean)
+
     def test_registry_covers_every_lightroom_panel(self) -> None:
         payload = develop_controls_payload()
         groups = {group["id"]: group["controls"] for group in payload["groups"]}
@@ -122,19 +285,23 @@ class DevelopSettingsTests(unittest.TestCase):
         self.assertEqual(properties["HueAdjustmentRed"]["minimum"], -100.0)
         self.assertFalse(settings["additionalProperties"])
 
-    def test_default_model_keys_allow_every_non_experimental_control(self) -> None:
+    def test_default_model_keys_skip_experimental_controls_and_the_mask(self) -> None:
         payload = develop_controls_payload()
         controls = [control for group in payload["groups"] for control in group["controls"]]
         expected = {
-            str(control["key"]) for control in controls if not control["experimental"]
+            str(control["key"])
+            for control in controls
+            if not control["experimental"] and control["key"] not in MASK_KEYS
         }
 
         self.assertEqual(set(MODEL_SETTING_KEYS), expected)
         self.assertEqual(set(payload["model_keys"]), expected)
+        # The mask (Post Crop vignette) is the one group that ships switched off.
+        self.assertEqual(set(payload["mask_keys"]), MASK_KEYS)
+        self.assertEqual(len(MASK_KEYS), 5)
         for key in (
             "WhiteBalance",
             "ToneCurveName",
-            "PostCropVignetteStyle",
             "AutoTone",
             "ConvertToGrayscale",
             "ToneCurvePV2012",
@@ -145,6 +312,17 @@ class DevelopSettingsTests(unittest.TestCase):
         self.assertFalse(
             {"AutoLateralCA", "PerspectiveScale", "PerspectiveUpright"} & set(MODEL_SETTING_KEYS)
         )
+        # The payload tells the web UI which switches start off, and the mask switch can
+        # unlock the vignette per request.
+        flags = {str(control["key"]): control["model_default"] for control in controls}
+        self.assertFalse(any(flags[key] for key in MASK_KEYS))
+        self.assertTrue(flags["Exposure2012"])
+        self.assertFalse(flags["PerspectiveScale"])
+        # The mask switch unlocks the vignette for that request only, and registry order
+        # (basic before effects) is kept.
+        unlocked = model_keys_for(["PostCropVignetteAmount", "Vibrance"])
+        self.assertEqual(set(unlocked), {"PostCropVignetteAmount", "Vibrance"})
+        self.assertLess(unlocked.index("Vibrance"), unlocked.index("PostCropVignetteAmount"))
 
     def test_model_keys_for_narrows_and_unlocks_controls(self) -> None:
         self.assertEqual(model_keys_for(None), MODEL_SETTING_KEYS)
@@ -158,7 +336,11 @@ class DevelopSettingsTests(unittest.TestCase):
         self.assertEqual(model_keys_for([]), ())
 
     def test_ollama_schema_describes_every_value_kind(self) -> None:
-        properties = _ollama_response_schema()["properties"]["settings"]["properties"]
+        # The mask ships switched off, so its enum is described on a request that
+        # unlocks it (the web UI mask switch does exactly that).
+        properties = _ollama_response_schema(
+            list(MODEL_SETTING_KEYS) + ["PostCropVignetteStyle"]
+        )["properties"]["settings"]["properties"]
 
         self.assertEqual(properties["WhiteBalance"]["type"], "string")
         self.assertIn("Daylight", properties["WhiteBalance"]["enum"])
@@ -196,16 +378,30 @@ class DevelopSettingsTests(unittest.TestCase):
             "HueAdjustmentRed",
             "ColorGradeGlobalHue",
             "SplitToningShadowHue",
-            "PostCropVignetteAmount",
             "GrainAmount",
             "LuminanceSmoothing",
             "ParametricShadows",
         ):
             self.assertIn(key, prompt)
+        # The mask (Post Crop vignette) is off by default, so the vignette keys and their
+        # window only show up once the mask switch puts them into the allowed set.
+        self.assertNotIn("PostCropVignette", prompt)
+        unlocked = _build_system_prompt(["PostCropVignetteAmount"])
+        self.assertIn("PostCropVignetteAmount", unlocked)
+        self.assertIn("PostCropVignetteRoundness at 25 or below", unlocked)
         # Each panel bullet names the trigger that makes the group worth using.
         self.assertIn("HSL / colour mixer (single colour work", prompt)
         self.assertIn("Detail (a soft photo that needs sharpening", prompt)
         self.assertIn("Colour grading (cinematic", prompt)
+
+    def test_system_prompt_states_the_vignette_window_only_when_the_mask_is_on(self) -> None:
+        self.assertNotIn("Post Crop vignette is unlocked", _build_system_prompt())
+        self.assertNotIn(
+            "Post Crop vignette is unlocked", _build_system_prompt(["Exposure2012", "Vibrance"])
+        )
+        # Any vignette key in the allowed set means the mask switch is on.
+        for key in ("PostCropVignetteAmount", "PostCropVignetteFeather", "PostCropVignetteStyle"):
+            self.assertIn("Post Crop vignette is unlocked", _build_system_prompt([key]))
 
     def test_system_prompt_roles_the_model_as_a_colourist(self) -> None:
         prompt = _build_system_prompt()

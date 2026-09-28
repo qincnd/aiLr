@@ -88,6 +88,30 @@ h1 em { color: var(--lime); font-style: normal; }
 .controls-divider { display: flex; align-items: center; justify-content: space-between; margin: 19px 0 10px; padding-top: 14px; border-top: 1px solid #343a31; color: #c2c7bb; font-size: 10px; }
 .controls-divider span + span { color: #798071; font: 9px 'DM Mono', monospace; }
 .suggestion-summary { margin: 0 0 6px; color: #9ca590; font-size: 10px; line-height: 1.6; }
+.overflow-report { margin: 0 0 9px; padding: 8px 9px; border-left: 2px solid #8d9d6f; background: #23261e; color: #c2c6a5; font-size: 9px; line-height: 1.55; }
+.overflow-report.is-warning { border-color: #b89b72; background: #33291f; color: #e0c9a4; }
+.overflow-notice { display: flex; align-items: flex-start; gap: 6px; margin: 0; overflow-wrap: anywhere; }
+.overflow-notice svg { flex: 0 0 auto; margin-top: 1px; }
+.overflow-detail { margin-top: 7px; }
+.overflow-detail summary { color: #a99a83; font-size: 8px; cursor: pointer; }
+.overflow-detail summary:hover { color: #cfc0a6; }
+.overflow-block { margin-top: 5px; }
+.overflow-block > span { color: #8c8171; font: 8px 'DM Mono', monospace; }
+.overflow-block ul { margin: 3px 0 0; padding-left: 15px; color: #b6ab98; font-size: 8px; line-height: 1.6; overflow-wrap: anywhere; }
+/* 蒙版开关条：默认关闭；强度快捷键给出的取值都在不会画出圆形硬边的窗口内。 */
+.mask-strip { margin: 0 0 10px; padding: 8px 9px; border: 1px solid #423a31; border-left: 2px solid #6d6254; border-radius: 3px; background: #1f1b17; }
+.mask-strip.is-on { border-left-color: #c4a882; background: #262019; }
+.mask-strip-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.mask-toggle { display: inline-flex; align-items: center; gap: 7px; color: #b0a695; font-size: 10px; cursor: pointer; }
+.mask-toggle input[type="checkbox"] { width: 14px; height: 14px; accent-color: #c4a882; }
+.mask-title { color: #ded0bf; font-weight: 600; }
+.mask-state { padding: 1px 4px; border: 1px solid #5a4c3e; border-radius: 2px; color: #8d8171; font-size: 8px; font-style: normal; }
+.mask-state.is-on { border-color: #c4a882; color: #e1c9a5; }
+.mask-strength { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid #53473a; border-radius: 3px; background: #211c18; }
+.mask-strength button { padding: 4px 9px; border: 0; border-radius: 2px; background: transparent; color: #a99c8b; font-size: 9px; cursor: pointer; }
+.mask-strength button:hover { color: #e1c9a5; }
+.mask-strength button.selected { background: #c4a882; color: #211c18; }
+.mask-hint { margin: 7px 0 0; color: #8f8578; font-size: 8px; line-height: 1.55; }
 .slider-list { display: flex; flex-direction: column; gap: 12px; padding: 8px 0 11px; }
 .slider-row { display: grid; grid-template-columns: 76px minmax(70px, 1fr) 35px; align-items: center; gap: 11px; }
 .slider-label { color: #aeb4a8; font-size: 10px; }

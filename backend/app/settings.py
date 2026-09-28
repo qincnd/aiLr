@@ -71,6 +71,33 @@ HSL_COLORS: tuple[tuple[str, str], ...] = (
 
 CURVE_MAX_POINTS = 16
 
+# --- 「伪蒙版」护栏 -----------------------------------------------------------
+#
+# The Post Crop vignette is the only control that can draw something the eye reads as
+# a region of the photo: a positive roundness turns the vignette from an ellipse that
+# hugs the frame into a circle inside it, and a feather near zero leaves a hard edge,
+# so the two together look like a circular mask pasted onto the photo instead of a
+# vignette. The model likes to push exactly those sliders to their ends, so model
+# answers are additionally held to the window below. Values the user drags by hand or
+# sends through the Lightroom bridge never take this path, so deliberate circle
+# vignettes stay possible.
+VIGNETTE_SAFE_WINDOW: dict[str, tuple[float, float]] = {
+    "PostCropVignetteAmount": (-60.0, 60.0),
+    "PostCropVignetteMidpoint": (20.0, 80.0),
+    "PostCropVignetteFeather": (25.0, 100.0),
+    "PostCropVignetteRoundness": (-100.0, 25.0),
+}
+VIGNETTE_WINDOW_REASONS: dict[str, str] = {
+    "PostCropVignetteAmount": "数量拉到极端时不再收束视线，而是变成一圈明显的光晕或黑圈",
+    "PostCropVignetteMidpoint": "中点太靠边会让暗角缩成画面中央的一小圈",
+    "PostCropVignetteFeather": "羽化为 0 会留下硬边，看起来像贴上去的一块蒙版",
+    "PostCropVignetteRoundness": "圆度为正会把暗角画成画面里的圆，横构图两侧会露出一圈弧线",
+}
+# 绘制叠加把暗角铺成一层纯色，看着最像一块蒙版。
+VIGNETTE_OVERLAY_STYLE = 3
+# 强度低于这个值时暗角在画面上几乎看不出来，护栏不必介入。
+VIGNETTE_VISIBLE_AMOUNT = 5.0
+
 
 def _slider(
     key: str,
@@ -308,12 +335,27 @@ DEVELOP_RANGES: dict[str, tuple[float, float]] = {
     if control.kind == "number"
 }
 
-# Keys the vision model may adjust by default: every control the registry exposes,
-# minus the ones whose meaning depends on the Lightroom version or a per-lens
-# profile. Values keep their natural JSON type, so the model may also answer with
-# enum names, boolean switches and "x,y;x,y" point curves.
+# The five Post Crop vignette keys are the only controls that can draw something the eye
+# reads as a region of the photo (see VIGNETTE_SAFE_WINDOW above). They are this
+# workspace's "mask": the web UI keeps them switched off behind one 蒙版 master switch
+# plus strength presets, so a suggestion only uses them once the user asked for a mask.
+VIGNETTE_SETTING_KEYS: tuple[str, ...] = tuple(
+    key for key in DEVELOP_CONTROLS if key.startswith("PostCropVignette")
+)
+
+
+def _model_default(control: DevelopControl) -> bool:
+    """Default state of the web UI's "allowed for the model" switch of one control."""
+    return not control.experimental and control.key not in VIGNETTE_SETTING_KEYS
+
+
+# Keys the vision model may adjust by default: every control the registry exposes, minus
+# the ones whose meaning depends on the Lightroom version or a per-lens profile, and minus
+# the vignette, which stays opt in per request through the mask switch (allowed_keys).
+# Values keep their natural JSON type, so the model may also answer with enum names,
+# boolean switches and "x,y;x,y" point curves.
 MODEL_SETTING_KEYS: tuple[str, ...] = tuple(
-    control.key for control in DEVELOP_CONTROLS.values() if not control.experimental
+    control.key for control in DEVELOP_CONTROLS.values() if _model_default(control)
 )
 
 CORE_SETTING_KEYS: tuple[str, ...] = tuple(
@@ -410,26 +452,125 @@ def _curve_points(control: DevelopControl, raw_value: Any) -> list[list[float]]:
     return normalized
 
 
-def validate_develop_settings(settings: dict[str, Any]) -> dict[str, Any]:
-    """Return supported Lightroom values after rejecting invalid model output."""
+def _validate_control(control: DevelopControl, raw_value: Any) -> Any:
+    """One value checked against its registry entry; raises on anything the host refuses."""
+    if control.kind == "number":
+        return _validate_number(control, raw_value)
+    if control.kind == "enum":
+        return _validate_enum(control, raw_value)
+    if control.kind == "bool":
+        return _validate_bool(control, raw_value)
+    return _curve_points(control, raw_value)
+
+
+def _vignette_problems(settings: dict[str, Any]) -> list[str]:
+    """Reasons a model answer would render a hard-edged circle instead of a vignette.
+
+    These values are all legal Lightroom values, so the range check lets them through
+    and the artifact only shows up on the photo. The suggestion chain sends the
+    reasons back to the model, and ``tame_vignette_artifacts()`` is the net that stops
+    the ones the model insists on from reaching the photo.
+    """
+    problems: list[str] = []
+    if settings.get("PostCropVignetteStyle") == VIGNETTE_OVERLAY_STYLE:
+        problems.append(
+            f"参数 PostCropVignetteStyle 取值 {VIGNETTE_OVERLAY_STYLE}（绘制叠加）会把暗角铺成一层纯色，"
+            "在画面上看起来像一块蒙版；请改用 1（高光优先）或 2（颜色优先），或者不要这个键"
+        )
+    amount = settings.get("PostCropVignetteAmount")
+    if (
+        isinstance(amount, (int, float))
+        and not isinstance(amount, bool)
+        and abs(float(amount)) < VIGNETTE_VISIBLE_AMOUNT
+    ):
+        # The answer's own amount is invisible, so its other vignette knobs cannot
+        # draw a visible shape on top of it.
+        return problems
+    for key, (low, high) in VIGNETTE_SAFE_WINDOW.items():
+        value = settings.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        if low <= float(value) <= high:
+            continue
+        problems.append(
+            f"参数 {key} 的值 {float(value):g} 会让暗角在画面上画出一圈硬边圆形（看起来像一块蒙版）："
+            f"{VIGNETTE_WINDOW_REASONS[key]}，请改到 {low:g} 至 {high:g} 之间"
+        )
+    return problems
+
+
+def review_develop_settings(
+    settings: dict[str, Any], *, guard_vignette: bool = False
+) -> tuple[dict[str, Any], list[str]]:
+    """Split one model answer into the values Lightroom accepts plus the overflow reasons.
+
+    The vision model can answer outside a slider range, with an enum name the host
+    does not know, with a wrongly typed value or with a key the registry does not
+    define. The suggestion chain sends those reasons back to the model for one more
+    answer instead of failing the whole request, so this returns both halves
+    separately: the usable values and one Chinese sentence per rejected value, ready
+    to be shown to the user. Only the accepted half ever reaches Lightroom.
+
+    ``guard_vignette`` additionally reports vignette values that are inside the slider
+    ranges but render as a hard-edged circle on the photo (see VIGNETTE_SAFE_WINDOW).
+    The suggestion chain turns it on for model answers; the strict path used by the
+    bridge and the MCP tools leaves it off, so hand-made values pass through as sent.
+    """
     if not isinstance(settings, dict) or not settings:
-        raise SettingsValidationError("至少需要一个调色参数")
+        return {}, ["至少需要一个调色参数"]
 
     normalized: dict[str, Any] = {}
+    problems: list[str] = []
     for name, raw_value in settings.items():
         control = DEVELOP_CONTROLS.get(name)
         if control is None:
-            raise SettingsValidationError(f"不支持的 Lightroom 参数: {name}")
-        if control.kind == "number":
-            normalized[name] = _validate_number(control, raw_value)
-        elif control.kind == "enum":
-            normalized[name] = _validate_enum(control, raw_value)
-        elif control.kind == "bool":
-            normalized[name] = _validate_bool(control, raw_value)
-        else:
-            normalized[name] = _curve_points(control, raw_value)
+            problems.append(f"不支持的 Lightroom 参数: {name}")
+            continue
+        try:
+            normalized[name] = _validate_control(control, raw_value)
+        except SettingsValidationError as error:
+            problems.append(str(error))
 
+    if guard_vignette:
+        problems.extend(_vignette_problems(normalized))
+
+    return normalized, problems
+
+
+def validate_develop_settings(settings: dict[str, Any]) -> dict[str, Any]:
+    """Return supported Lightroom values after rejecting invalid model output."""
+    normalized, problems = review_develop_settings(settings)
+    if problems:
+        raise SettingsValidationError(problems[0])
     return normalized
+
+
+def tame_vignette_artifacts(settings: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Pull the vignette values that would draw a fake mask into the safe window.
+
+    Last-resort net behind the repair rounds: the model is asked to fix those values
+    first, and whatever it still insists on is clamped here, so no answer that renders
+    as a hard-edged circle can reach the photo. Each change is spelled out for the
+    user, and a value inside the window is never touched.
+    """
+    if not _vignette_problems(settings):
+        return dict(settings), []
+
+    tamed = dict(settings)
+    changes: list[str] = []
+    if tamed.get("PostCropVignetteStyle") == VIGNETTE_OVERLAY_STYLE:
+        tamed.pop("PostCropVignetteStyle")
+        changes.append("PostCropVignetteStyle 绘制叠加 已去掉（会把暗角铺成一块纯色蒙版）")
+    for key, (low, high) in VIGNETTE_SAFE_WINDOW.items():
+        value = tamed.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        if low <= float(value) <= high:
+            continue
+        clamped = min(max(float(value), low), high)
+        tamed[key] = clamped
+        changes.append(f"{key} 由 {float(value):g} 收敛为 {clamped:g}（{VIGNETTE_WINDOW_REASONS[key]}）")
+    return tamed, changes
 
 
 def _control_payload(control: DevelopControl) -> dict[str, Any]:
@@ -446,6 +587,7 @@ def _control_payload(control: DevelopControl) -> dict[str, Any]:
         "choices": [[choice, label] for choice, label in control.choices],
         "core": control.core,
         "experimental": control.experimental,
+        "model_default": _model_default(control),
         "description": control.description,
     }
 
@@ -467,5 +609,6 @@ def develop_controls_payload() -> dict[str, Any]:
         ],
         "model_keys": list(MODEL_SETTING_KEYS),
         "core_keys": list(CORE_SETTING_KEYS),
+        "mask_keys": list(VIGNETTE_SETTING_KEYS),
         "total": len(DEVELOP_CONTROLS),
     }

@@ -20,7 +20,19 @@ import {
   X,
 } from 'lucide-react'
 
-type Suggestion = { summary: string; settings: Record<string, SettingValue> }
+// 模型给出的参数越界时，后端会把溢出清单回传模型重试；暗角这类合法但会在画面上画出
+// 硬边圆形的参数也会被回传并最终收敛。两种情况都随建议一起返回这份报告。
+type OverflowReport = {
+  attempts: number
+  rounds: number
+  repaired: boolean
+  resolved: string[]
+  unresolved: string[]
+  dropped_keys: string[]
+  adjusted: string[]
+  notice: string
+}
+type Suggestion = { summary: string; settings: Record<string, SettingValue>; overflow?: OverflowReport }
 type Health = { status: string; provider: 'ollama' | 'openai'; model: string; model_active: boolean; model_message: string; lightroom: string }
 type ModelConfiguration = {
   provider: 'ollama' | 'openai'
@@ -48,10 +60,11 @@ type DevelopControl = {
   choices: [number | string, string][]
   core: boolean
   experimental: boolean
+  model_default: boolean
   description: string
 }
 type DevelopGroup = { id: string; label: string; controls: DevelopControl[] }
-type DevelopRegistry = { groups: DevelopGroup[]; model_keys: string[]; core_keys: string[]; total: number }
+type DevelopRegistry = { groups: DevelopGroup[]; model_keys: string[]; core_keys: string[]; mask_keys: string[]; total: number }
 
 const API = 'http://127.0.0.1:8000'
 // 静态使用指南：随 Vite public/ 目录一起发布，地址 /使用指南.html
@@ -145,6 +158,20 @@ const COLOR_PRESETS: ColorPreset[] = [
     prompt: '暗调情绪：曝光稍微压低，黑场压实、阴影压深但主体的暗部仍要看得清，对比度提高一点让光影更集中，把阴影推向冷蓝、高光保持中性偏暖，饱和度整体降低只在主体关键颜色上保留一点饱和度，加轻微暗角；避免大面积死黑和噪点被放大。',
   },
 ]
+// 蒙版 = 效果面板里的「裁剪后暗角」五项。默认关闭：关闭时大模型不会被允许给出这组参数，
+// 已经加入本次渲染的蒙版值也会被移除。强度快捷键给出的取值都落在不会画出圆形硬边的窗口内
+// （圆度 0、羽化 60、中点 50，数量由按钮决定），用户可以再在参数里手动微调。
+const MASK_STRENGTHS: { id: string; label: string; amount: number }[] = [
+  { id: 'light', label: '轻', amount: -15 },
+  { id: 'medium', label: '中', amount: -30 },
+  { id: 'strong', label: '强', amount: -50 },
+]
+const MASK_FRAME: Record<string, SettingValue> = {
+  PostCropVignetteFeather: 60,
+  PostCropVignetteMidpoint: 50,
+  PostCropVignetteRoundness: 0,
+  PostCropVignetteStyle: 1,
+}
 // 调色参数表由后端注册表提供（GET /api/develop/controls），前端只保留兜底与解析工具。
 function genericControl(key: string): DevelopControl {
   return {
@@ -160,6 +187,7 @@ function genericControl(key: string): DevelopControl {
     choices: [],
     core: false,
     experimental: false,
+    model_default: true,
     description: '',
   }
 }
@@ -225,7 +253,8 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [registry, setRegistry] = useState<DevelopRegistry>()
-  // 允许大模型调整的参数集合：默认除实验参数外全部允许，面板开关只控制这一范围。
+  // 允许大模型调整的参数集合：默认状态由后端注册表的 model_default 决定（实验参数与
+  // 蒙版即裁剪后暗角默认关闭），面板开关只控制这一范围。
   const [allowedKeys, setAllowedKeys] = useState<Record<string, boolean>>({})
   const [settings, setSettings] = useState<Record<string, SettingValue>>({})
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({ basic: true })
@@ -242,6 +271,9 @@ export default function App() {
     registry?.groups.forEach((group) => group.controls.forEach((control) => { index[control.key] = control }))
     return index
   }, [registry])
+
+  // 蒙版 = 后端注册表里的 mask_keys（效果面板的裁剪后暗角五项）。
+  const maskKeys = useMemo(() => registry?.mask_keys ?? [], [registry])
 
   useEffect(() => {
     let cancelled = false
@@ -326,7 +358,7 @@ export default function App() {
           Object.fromEntries(
             data.groups
               .flatMap((group) => group.controls)
-              .map((control) => [control.key, !control.experimental]),
+              .map((control) => [control.key, control.model_default]),
           ),
         )
       })
@@ -533,13 +565,47 @@ export default function App() {
 
   function addSetting(control: DevelopControl) {
     setSetting(control.key, control.default)
+    // 手动把蒙版参数加入本次渲染，等同于打开蒙版开关，避免开关状态与实际写入不一致。
+    if (maskKeys.includes(control.key)) setMaskAllowed(true)
+  }
+
+  // 一次设置蒙版五个参数的「允许大模型调整」状态。
+  function setMaskAllowed(enabled: boolean) {
+    setAllowedKeys((current) => {
+      const next = { ...current }
+      maskKeys.forEach((key) => { next[key] = enabled })
+      return next
+    })
   }
 
   function toggleAllowed(control: DevelopControl) {
-    const allowed = allowedKeys[control.key] ?? !control.experimental
+    const allowed = allowedKeys[control.key] ?? control.model_default
     setAllowedKeys((current) => ({ ...current, [control.key]: !allowed }))
     // 不再允许模型调整的参数也退出本次渲染，避免开关与写入值不一致。
     if (allowed && control.key in settings) removeSetting(control.key)
+  }
+
+  // 蒙版开关：一次改变效果面板里全部暗角参数的允许状态；关闭时同时把本次渲染里的
+  // 暗角值清掉，让「开关状态」与「实际写入 LrPhoto 的参数」始终一致。
+  function setMaskEnabled(enabled: boolean) {
+    if (maskKeys.length === 0) return
+    setMaskAllowed(enabled)
+    if (!enabled) {
+      setSettings((current) => Object.fromEntries(
+        Object.entries(current).filter(([key]) => !maskKeys.includes(key)),
+      ))
+    }
+    setLightroomWarning('')
+    resetLightroomPreview()
+  }
+
+  // 强度快捷键：打开蒙版并把安全窗口内的暗角参数写进本次渲染。
+  function applyMaskStrength(amount: number) {
+    if (maskKeys.length === 0) return
+    setMaskAllowed(true)
+    setSettings((current) => ({ ...current, ...MASK_FRAME, PostCropVignetteAmount: amount }))
+    setLightroomWarning('')
+    resetLightroomPreview()
   }
 
   function controlFor(key: string) {
@@ -733,6 +799,15 @@ export default function App() {
   const connected = Boolean(health)
   const hasSettings = Object.keys(settings).length > 0
   const allowedTotal = Object.values(allowedKeys).filter(Boolean).length
+  // 蒙版开关状态跟随这组参数的「允许大模型调整」开关；强度由当前裁剪后暗角数量决定。
+  const maskOn = maskKeys.some((key) => allowedKeys[key] === true)
+  const maskAmount = typeof settings.PostCropVignetteAmount === 'number' ? settings.PostCropVignetteAmount : undefined
+  const maskStrength = MASK_STRENGTHS.find((preset) => preset.amount === maskAmount)?.id
+  const maskHint = !maskOn
+    ? '默认关闭：关闭时 AI 不会使用蒙版，本次渲染也不会带蒙版参数'
+    : typeof maskAmount === 'number'
+      ? `已开启 · 当前裁剪后暗角数量 ${maskAmount}，可在下方参数里继续微调`
+      : '已开启，但本次渲染还没有蒙版参数；点「轻 / 中 / 强」快速加入'
   const activePreset = COLOR_PRESETS.find((preset) => preset.prompt === prompt)
   const displayedPreview = previewMode === 'lightroom' && lightroomPreviewUrl ? lightroomPreviewUrl : previewUrl
 
@@ -824,7 +899,56 @@ export default function App() {
             </button>
             {error && <div className="error-message" role="alert">{error}</div>}
             <div className="controls-divider"><span>参数微调</span><span>{hasSettings ? `${Object.keys(settings).length} 项待应用` : '等待 AI 建议或手动添加'}</span></div>
+            {maskKeys.length > 0 && (
+              <section className={`mask-strip ${maskOn ? 'is-on' : ''}`} aria-label="蒙版">
+                <div className="mask-strip-head">
+                  <label className="mask-toggle" title="蒙版 = 效果面板的「裁剪后暗角」五项。默认关闭：关闭时 AI 不会给出这组参数，本次渲染也不会带蒙版。">
+                    <input type="checkbox" checked={maskOn} onChange={(event) => setMaskEnabled(event.target.checked)} />
+                    <span className="mask-title">蒙版</span>
+                    <em className={`mask-state ${maskOn ? 'is-on' : ''}`}>{maskOn ? '已开启' : '默认关闭'}</em>
+                  </label>
+                  <div className="mask-strength" role="group" aria-label="蒙版强度">
+                    <button className={maskOn ? '' : 'selected'} onClick={() => setMaskEnabled(false)} title="关闭蒙版，并从本次渲染里移除暗角参数">关闭</button>
+                    {MASK_STRENGTHS.map((preset) => (
+                      <button
+                        key={preset.id}
+                        className={maskOn && maskStrength === preset.id ? 'selected' : ''}
+                        onClick={() => applyMaskStrength(preset.amount)}
+                        title={`打开蒙版并把「裁剪后暗角 数量」设为 ${preset.amount}（羽化 60、圆度 0、中点 50，不会出现圆形硬边）`}
+                      >{preset.label}</button>
+                    ))}
+                  </div>
+                </div>
+                <p className="mask-hint">{maskHint}</p>
+              </section>
+            )}
             {suggestion && <p className="suggestion-summary">{suggestion.summary}</p>}
+            {suggestion?.overflow && (
+              <div className={`overflow-report ${suggestion.overflow.unresolved.length > 0 ? 'is-warning' : ''}`} role="status">
+                <p className="overflow-notice"><RefreshCw size={12} />{suggestion.overflow.notice}</p>
+                <details className="overflow-detail">
+                  <summary>查看参数修正明细（模型调用 {suggestion.overflow.attempts} 次）</summary>
+                  {suggestion.overflow.unresolved.length > 0 && (
+                    <div className="overflow-block">
+                      <span>重试后仍不合规、已从本次方案丢弃</span>
+                      <ul>{suggestion.overflow.unresolved.map((item) => <li key={item}>{item}</li>)}</ul>
+                    </div>
+                  )}
+                  {suggestion.overflow.resolved.length > 0 && (
+                    <div className="overflow-block">
+                      <span>已按范围重新生成</span>
+                      <ul>{suggestion.overflow.resolved.map((item) => <li key={item}>{item}</li>)}</ul>
+                    </div>
+                  )}
+                  {suggestion.overflow.adjusted.length > 0 && (
+                    <div className="overflow-block">
+                      <span>已按防伪蒙版规则收敛，避免画面上出现圆形硬边</span>
+                      <ul>{suggestion.overflow.adjusted.map((item) => <li key={item}>{item}</li>)}</ul>
+                    </div>
+                  )}
+                </details>
+              </div>
+            )}
             {hasSettings ? (
               <>
                 <div className="slider-list">
@@ -888,7 +1012,7 @@ export default function App() {
               {registry?.groups.map((group) => {
                 const open = openGroups[group.id] ?? false
                 const activeCount = group.controls.filter((control) => control.key in settings).length
-                const allowedCount = group.controls.filter((control) => allowedKeys[control.key] ?? !control.experimental).length
+                const allowedCount = group.controls.filter((control) => allowedKeys[control.key] ?? control.model_default).length
                 return (
                   <div className={`develop-group ${open ? 'is-open' : ''}`} key={group.id}>
                     <button className="develop-group-head" onClick={() => setOpenGroups((current) => ({ ...current, [group.id]: !open }))} aria-expanded={open}>
@@ -899,7 +1023,7 @@ export default function App() {
                     {open && <div className="develop-group-body">
                       {group.controls.map((control) => {
                         const active = control.key in settings
-                        const allowed = allowedKeys[control.key] ?? !control.experimental
+                        const allowed = allowedKeys[control.key] ?? control.model_default
                         const rejected = probeResult?.unsupported.includes(control.key) ?? false
                         return (
                           <div className={`develop-row ${active ? 'is-active' : ''} ${rejected ? 'is-rejected' : ''} ${allowed ? '' : 'is-disallowed'}`} key={control.key}>
@@ -908,6 +1032,7 @@ export default function App() {
                               <span className="develop-row-label">
                                 {control.label}
                                 {control.experimental && <em className="develop-tag">实验</em>}
+                                {maskKeys.includes(control.key) && <em className="develop-tag">蒙版</em>}
                                 {rejected && <em className="develop-tag is-warning">宿主不支持</em>}
                               </span>
                             </label>

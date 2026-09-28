@@ -5,13 +5,16 @@ from typing import Any, Iterable
 
 import httpx
 
-from app.config import OLLAMA_CONTEXT_SIZE, load_model_config
+from app.config import ModelConfig, OLLAMA_CONTEXT_SIZE, load_model_config
 from app.settings import (
     CORE_SETTING_KEYS,
     DEVELOP_CONTROLS,
     DEVELOP_GROUPS,
     DevelopControl,
+    VIGNETTE_SETTING_KEYS,
     model_keys_for,
+    review_develop_settings,
+    tame_vignette_artifacts,
     validate_develop_settings,
 )
 
@@ -27,11 +30,29 @@ SYSTEM_PROMPT_CRAFT = """How you work this photo:
 6. Stop when the look is reached: a single slider is not an answer when the photo needs light, colour and detail work.
 7. This workspace writes global develop sliders only: no masks, no local adjustments, no crop and no healing brush exist - the PostCrop vignette keys are global effects and are fine - so change only what these sliders can change and describe the edit in summary instead of promising local work."""
 
-SYSTEM_PROMPT_CONTRACT = """Answer with one JSON object holding summary and settings. summary: one or two sentences naming your diagnosis and the look you are going for, written for the photographer. settings: keys must come from the allowed lists below, every value uses the Lightroom scale, and any key you leave out keeps its Lightroom default. Never invent a key and never emit a key outside those lists. Temperature is an absolute white-balance value in Kelvin from 2000 to 50000, not a normalized 0-to-1 value or a relative adjustment; natural daylight is usually around 5000 to 6500 K. Do not output values such as 0.5 for Temperature."""
+SYSTEM_PROMPT_CONTRACT = """Answer with one JSON object holding summary and settings. summary: one or two sentences naming your diagnosis and the look you are going for, written for the photographer. settings: keys must come from the allowed lists below, every value uses the Lightroom scale, and any key you leave out keeps its Lightroom default. Never invent a key and never emit a key outside those lists. Numbers must sit inside the minimum and maximum listed for their key and enum keys must use one of their listed choices: Lightroom rejects anything outside them, and an answer that overflows is sent straight back to you for another attempt, so keep the first answer legal. Temperature is an absolute white-balance value in Kelvin from 2000 to 50000, not a normalized 0-to-1 value or a relative adjustment; natural daylight is usually around 5000 to 6500 K. Do not output values such as 0.5 for Temperature."""
 
 # Fixed part of every prompt: role, working method, output contract. The allowed
 # key lists are appended per request by _build_system_prompt.
 SYSTEM_PROMPT_HEAD = "\n".join((SYSTEM_PROMPT_ROLE, SYSTEM_PROMPT_CRAFT, SYSTEM_PROMPT_CONTRACT))
+
+# Only appended when the request unlocked the mask (the web UI mask switch): the Post Crop
+# vignette is the one effect that can draw a shape the eye reads as a region of the photo,
+# so the model is told the window that keeps it soft instead of a circle.
+VIGNETTE_RULE = (
+    "The Post Crop vignette is unlocked for this answer: use it when the brief asks for a "
+    "vignette, and keep it soft and frame-hugging - PostCropVignetteAmount inside -60 to 60, "
+    "PostCropVignetteFeather at 25 or more, PostCropVignetteMidpoint between 20 and 80, and "
+    "PostCropVignetteRoundness at 25 or below with Style 1 or 2. Anything more draws a "
+    "hard-edged circle across the frame, which reads as a broken mask stuck on the photo, and "
+    "such an answer is sent straight back to you."
+)
+
+# Extra turns the model gets to bring an overflowing answer back into the Lightroom
+# ranges before the offending values are dropped and reported to the user.
+MAX_PARAMETER_REPAIR_ROUNDS = 2
+# Cap the correction list so a stubborn answer cannot blow up the context.
+MAX_REPAIR_ISSUES = 12
 
 
 def _choice_list(control: DevelopControl) -> str:
@@ -85,7 +106,7 @@ SWITCH_USAGE: dict[str, str] = {
 ENUM_USAGE: dict[str, str] = {
     "WhiteBalance": "leave As Shot unless the brief names a preset or the cast is clearly wrong",
     "ToneCurveName": "a strong preset contrast curve, for example when the brief asks for film contrast",
-    "PostCropVignetteStyle": "how the vignette is drawn; change it together with the vignette amount",
+    "PostCropVignetteStyle": "how the vignette is drawn; change it together with the vignette amount, pick 1 (highlight priority) or 2 (colour priority) and never 3, whose flat overlay reads as a mask",
     "PerspectiveUpright": "automatic perspective correction when the brief asks for straight verticals",
 }
 
@@ -137,6 +158,9 @@ def _build_system_prompt(keys: Iterable[str] | None = None) -> str:
             "- instead of stopping at one or two sliders."
         )
     sections = [SYSTEM_PROMPT_HEAD, scope]
+    if set(VIGNETTE_SETTING_KEYS) & allowed_set:
+        # The mask switch is on for this request, so the vignette rule applies.
+        sections.append(VIGNETTE_RULE)
     if preferred:
         sections.append(
             "Base sliders used by nearly every edit: "
@@ -237,7 +261,14 @@ def _ollama_response_schema(keys: Iterable[str] | None = None) -> dict[str, Any]
     }
 
 
-def _parse_suggestion(text: str, keys: Iterable[str] | None = None) -> dict[str, Any]:
+def _read_suggestion(
+    text: str, keys: Iterable[str] | None = None
+) -> tuple[str, dict[str, Any]]:
+    """Read one model answer into its summary and the allowed values it proposed.
+
+    Values are not checked against the registry here: the caller reviews them so it
+    can hand the overflow list back to the model before it answers the request.
+    """
     cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.IGNORECASE)
     try:
         payload = json.loads(cleaned)
@@ -253,10 +284,13 @@ def _parse_suggestion(text: str, keys: Iterable[str] | None = None) -> dict[str,
     if not proposed:
         raise ValueError("模型没有返回任何允许调整的参数")
 
-    return {
-        "summary": str(payload.get("summary", "已生成调色建议"))[:500],
-        "settings": validate_develop_settings(proposed),
-    }
+    return str(payload.get("summary", "已生成调色建议"))[:500], proposed
+
+
+def _parse_suggestion(text: str, keys: Iterable[str] | None = None) -> dict[str, Any]:
+    """Strict single-answer parse: anything Lightroom would refuse raises."""
+    summary, proposed = _read_suggestion(text, keys)
+    return {"summary": summary, "settings": validate_develop_settings(proposed)}
 
 
 def _raise_for_model_response(response: httpx.Response, provider: str) -> None:
@@ -271,12 +305,149 @@ def _raise_for_model_response(response: httpx.Response, provider: str) -> None:
         raise RuntimeError(f"{provider} 返回 HTTP {response.status_code}: {str(detail)[:500]}") from error
 
 
+def _user_message(
+    provider: str, text: str, encoded_image: str | None, mime_type: str
+) -> dict[str, Any]:
+    """One user turn; Ollama carries images inside the message, OpenAI uses parts."""
+    if provider == "ollama":
+        message: dict[str, Any] = {"role": "user", "content": text}
+        if encoded_image:
+            message["images"] = [encoded_image]
+        return message
+
+    content: list[dict[str, Any]] = [{"type": "text", "text": text}]
+    if encoded_image:
+        content.append(
+            {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{encoded_image}"}}
+        )
+    return {"role": "user", "content": content}
+
+
+async def _request_answer(
+    client: httpx.AsyncClient,
+    model_config: ModelConfig,
+    system_prompt: str,
+    messages: list[dict[str, Any]],
+    keys: Iterable[str],
+) -> str:
+    """One chat completion request; returns the raw answer text of the model."""
+    if model_config.provider == "ollama":
+        response = await client.post(
+            f"{model_config.ollama_base_url.rstrip('/')}/api/chat",
+            json={
+                "model": model_config.model_name,
+                "stream": False,
+                "format": _ollama_response_schema(keys),
+                "messages": [{"role": "system", "content": system_prompt}, *messages],
+                "options": {"temperature": 0.2, "num_ctx": OLLAMA_CONTEXT_SIZE},
+            },
+        )
+        _raise_for_model_response(response, "Ollama")
+        return response.json()["message"]["content"]
+
+    if not model_config.api_key:
+        raise RuntimeError("请先在模型设置中填写云端 API Key")
+    response = await client.post(
+        f"{model_config.openai_base_url.rstrip('/')}/chat/completions",
+        headers={"Authorization": f"Bearer {model_config.api_key}"},
+        json={
+            "model": model_config.model_name,
+            "response_format": {"type": "json_object"},
+            "messages": [{"role": "system", "content": system_prompt}, *messages],
+            "temperature": 0.2,
+        },
+    )
+    _raise_for_model_response(response, "云端模型")
+    return response.json()["choices"][0]["message"]["content"]
+
+
+def _repair_instruction(problems: list[str]) -> str:
+    """Correction turn: name every value the model has to fix or drop.
+
+    Two kinds of problem end up here: values Lightroom refuses, and values it accepts
+    that would render as an artifact such as a hard-edged vignette circle. The wording
+    covers both without claiming the host rejected something it did not.
+    """
+    listed = problems[:MAX_REPAIR_ISSUES]
+    bullets = "\n".join(f"- {problem}" for problem in listed)
+    if len(problems) > len(listed):
+        bullets += f"\n- ...and {len(problems) - len(listed)} more of the same kind."
+    return (
+        "Your last answer breaks these rules:\n"
+        f"{bullets}\n"
+        "Answer once more with one complete JSON object holding summary and settings: fix every "
+        "item above - keep that value inside the range or choice list it was given, and follow the "
+        "note when the item is about the vignette drawing a visible circle - or leave that key out "
+        "entirely, keep every other key as it was, and never add a key outside the allowed lists."
+    )
+
+
+def _overflow_report(
+    attempts: int,
+    repair_rounds: int,
+    first_problems: list[str],
+    problems: list[str],
+    dropped_keys: list[str],
+    adjustments: list[str],
+) -> dict[str, Any] | None:
+    """What the web UI tells the user about repaired, dropped or tamed parameters."""
+    if not first_problems and not adjustments:
+        return None
+
+    if problems:
+        if dropped_keys:
+            tail = f"已丢弃这些参数（{'、'.join(dropped_keys)}）"
+        else:
+            tail = "已把不合规的参数收敛到安全取值"
+        notice = (
+            f"模型首次回答有 {len(first_problems)} 项参数不合规，回传修正 {repair_rounds} 次后仍有 "
+            f"{len(problems)} 项不合规，{tail}，"
+            "写入 LrC 的值都保证在范围内且不会画出硬边圆形。"
+        )
+    elif first_problems:
+        notice = (
+            f"模型首次回答有 {len(first_problems)} 项参数不合规，已把溢出清单回传并修正 "
+            f"{repair_rounds} 次，全部参数现已落在允许范围内。"
+        )
+    else:
+        notice = "模型的暗角参数会在画面上画出一圈硬边圆形（看起来像蒙版），已按防伪蒙版规则收敛后才写入 LrC。"
+
+    if adjustments:
+        notice = f"{notice} 收敛明细：{'；'.join(adjustments)}。"
+
+    return {
+        "attempts": attempts,
+        "rounds": repair_rounds,
+        "repaired": not problems,
+        "resolved": [problem for problem in first_problems if problem not in problems],
+        "unresolved": list(problems),
+        "dropped_keys": list(dropped_keys),
+        "adjusted": list(adjustments),
+        "notice": notice,
+    }
+
+
+
 async def generate_suggestion(
     prompt: str,
     image: bytes,
     mime_type: str,
     allowed_keys: Iterable[str] | None = None,
 ) -> dict[str, Any]:
+    """One suggestion, repaired at most MAX_PARAMETER_REPAIR_ROUNDS times.
+
+    The model is asked to answer inside the Lightroom ranges and the JSON schema
+    spells them out, but a vision model can still overflow a slider, invent an enum
+    name or mistype a value. Instead of failing the whole request, the values
+    Lightroom would refuse are sent back to the model as a correction turn; whatever
+    still overflows after the last round is dropped, and the caller is told which
+    parameters were fixed or dropped so it can pass that on to the user.
+
+    The same rounds also carry the vignette guard: legal vignette values that would
+    render as a hard-edged circle (see VIGNETTE_SAFE_WINDOW in settings.py) are sent
+    back as well, and tame_vignette_artifacts() clamps whatever survives, so the photo
+    can never end up with a circular artifact that looks like a mask.
+    """
     model_config = load_model_config()
     keys = model_keys_for(allowed_keys)
     if not keys:
@@ -284,52 +455,59 @@ async def generate_suggestion(
     system_prompt = _build_system_prompt(keys)
     encoded_image = base64.b64encode(image).decode("ascii")
     user_text = f"User direction: {prompt.strip() or 'Create a balanced natural edit.'}"
+    messages = [_user_message(model_config.provider, user_text, encoded_image, mime_type)]
+
+    attempts = 0
+    repair_rounds = 0
+    first_problems: list[str] = []
+    summary = ""
+    accepted: dict[str, Any] = {}
+    problems: list[str] = []
+    dropped_keys: list[str] = []
 
     async with httpx.AsyncClient(timeout=120) as client:
-        if model_config.provider == "ollama":
-            response = await client.post(
-                f"{model_config.ollama_base_url.rstrip('/')}/api/chat",
-                json={
-                    "model": model_config.model_name,
-                    "stream": False,
-                    "format": _ollama_response_schema(keys),
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_text, "images": [encoded_image]},
-                    ],
-                    "options": {"temperature": 0.2, "num_ctx": OLLAMA_CONTEXT_SIZE},
-                },
+        for round_index in range(MAX_PARAMETER_REPAIR_ROUNDS + 1):
+            attempts += 1
+            answer = await _request_answer(client, model_config, system_prompt, messages, keys)
+            try:
+                round_summary, proposed = _read_suggestion(answer, keys)
+            except ValueError:
+                if round_index == 0:
+                    raise
+                # A correction turn that answers with garbage must not throw away the
+                # part of the previous answer that was already usable.
+                break
+            summary = round_summary
+            accepted, problems = review_develop_settings(proposed, guard_vignette=True)
+            dropped_keys = [name for name in proposed if name not in accepted]
+            if not problems:
+                dropped_keys = []
+                break
+            if round_index == 0:
+                first_problems = list(problems)
+            if round_index >= MAX_PARAMETER_REPAIR_ROUNDS:
+                # No further attempt left: the overflow list is only reported now.
+                break
+            repair_rounds += 1
+            messages.append({"role": "assistant", "content": answer})
+            messages.append(
+                _user_message(model_config.provider, _repair_instruction(problems), None, mime_type)
             )
-            _raise_for_model_response(response, "Ollama")
-            text = response.json()["message"]["content"]
-        else:
-            if not model_config.api_key:
-                raise RuntimeError("请先在模型设置中填写云端 API Key")
-            response = await client.post(
-                f"{model_config.openai_base_url.rstrip('/')}/chat/completions",
-                headers={"Authorization": f"Bearer {model_config.api_key}"},
-                json={
-                    "model": model_config.model_name,
-                    "response_format": {"type": "json_object"},
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": user_text},
-                                {
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": f"data:{mime_type};base64,{encoded_image}"
-                                    },
-                                },
-                            ],
-                        },
-                    ],
-                    "temperature": 0.2,
-                },
-            )
-            _raise_for_model_response(response, "云端模型")
-            text = response.json()["choices"][0]["message"]["content"]
 
-    return _parse_suggestion(text, keys)
+    if not accepted:
+        raise ValueError(
+            f"模型返回的参数全部越界，回传修正 {repair_rounds} 次后仍未通过校验："
+            + "；".join(problems[:MAX_REPAIR_ISSUES])
+        )
+
+    # Deterministic net behind the repair rounds: whatever vignette value the model
+    # insisted on is pulled into the window that cannot draw a hard-edged circle.
+    accepted, vignette_adjustments = tame_vignette_artifacts(accepted)
+
+    result: dict[str, Any] = {"summary": summary, "settings": accepted}
+    overflow = _overflow_report(
+        attempts, repair_rounds, first_problems, problems, dropped_keys, vignette_adjustments
+    )
+    if overflow:
+        result["overflow"] = overflow
+    return result

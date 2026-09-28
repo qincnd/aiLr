@@ -339,7 +339,7 @@ h1 em { color: var(--lime); font-style: normal; }
 .preset-tag { padding: 1px 5px; border: 1px solid #5a4c3e; border-radius: 2px; color: #b9a892; font-size: 8px; font-style: normal; }
 .preset-applied { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; color: #c4a882; font-size: 8px; }
 .preset-summary { color: #9c9184; font-size: 9px; line-height: 1.65; }
-.preset-prompt { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; color: #6f6558; font: 8px 'DM Mono', monospace; line-height: 1.6; }
+.preset-prompt { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; color: #6f6558; font: 8px 'DM Mono', monospace; line-height: 1.6; }
 .drawer-footer { margin-top: 15px; padding-top: 13px; border-top: 1px solid #3f3831; display: flex; flex-direction: column; gap: 10px; color: #7f7568; font-size: 8px; line-height: 1.7; }
 .preset-clear { align-self: flex-start; height: 28px; padding: 0 11px; border: 1px solid #4a4036; border-radius: 3px; background: transparent; color: #cfc3b1; font-size: 9px; cursor: pointer; }
 .preset-clear:hover:not(:disabled) { border-color: #c98b7c; color: #d9a196; }

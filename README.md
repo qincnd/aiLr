@@ -132,6 +132,7 @@ LrC 的 Develop 参数会写入当前选中照片并产生可撤销的历史记�
 ```
 
 测试不需要启动 Ollama 或 Lightroom Classic。
+也不需要连接大模型
 
 ## Lightroom Classic 集成边界
 

@@ -8,6 +8,7 @@ import {
   ChevronRight,
   Download,
   ImagePlus,
+  Palette,
   Plus,
   Power,
   RefreshCw,
@@ -79,6 +80,71 @@ const defaultModelConfig: ModelConfiguration = {
   openai_base_url: 'https://api.openai.com/v1',
   api_key: '',
 }
+// 预设调色方向：只提供提示词文案，点击后填进创作说明，仍由用户自由修改。
+// prompt 会作为 POST /api/suggestions 的 prompt 字段原样传给模型，所以描述保持
+// 「氛围 + 光影 + 颜色 + 需要保留的细节 + 要避免的问题」，且不超过输入框的 500 字上限。
+type ColorPreset = { id: string; name: string; tag: string; summary: string; prompt: string }
+
+const PROMPT_MAX_LENGTH = 500
+
+const COLOR_PRESETS: ColorPreset[] = [
+  {
+    id: 'film-portrait',
+    name: '胶片暖调人像',
+    tag: '人像',
+    summary: '暖调肤色、微微褪色的阴影与轻颗粒，适合日常与婚礼照片。',
+    prompt: '胶片质感的暖调人像：肤色干净通透带一点奶油感，高光加暖、阴影稍微抬起并带轻微褪色感，整体饱和度降低但保留衣服和背景的色彩层次，加少量颗粒和轻微暗角；避免肤色发黄发橙，脸颊和额头保留细节。',
+  },
+  {
+    id: 'natural-landscape',
+    name: '自然通透风光',
+    tag: '风光',
+    summary: '先把白平衡与影调校正好，天空有层次，绿色不过饱和。',
+    prompt: '自然通透的风光：先把白平衡校正到准确中性，收回高光保留云层层次，提起阴影让暗部有细节但不发灰，压实黑场，适当增加清晰度和少量去朦胧让远山有层次，绿色与蓝色饱和度克制一些；避免整体过饱和和天空出现色块。',
+  },
+  {
+    id: 'japanese-fresh',
+    name: '日系清新',
+    tag: '日常',
+    summary: '高调明亮、低对比、淡青绿，适合生活与少女感人像。',
+    prompt: '日系清新：整体明亮通透，曝光略微提升、阴影提起，降低对比度让画面柔和，白平衡稍微偏冷带一点青绿，肤色干净白皙不要发红，饱和度整体降低但保留淡雅的花草颜色，清晰度略微降低让皮肤更柔；避免过曝和灰雾感。',
+  },
+  {
+    id: 'cinematic-teal-orange',
+    name: '电影感青橙',
+    tag: '风格化',
+    summary: '阴影青蓝、高光暖橙，压得住画面同时保住肤色。',
+    prompt: '电影感青橙调：颜色分级里把阴影推向青蓝、高光推向暖橙，中间调保持中性以保住肤色，整体对比适中并稍微压一点高光，压实黑场但保留暗部细节，饱和度整体略降；人像要保证肤色不发绿不发紫，必要时用混色器单独微调橙色和肤色。',
+  },
+  {
+    id: 'mono-documentary',
+    name: '黑白纪实',
+    tag: '风格化',
+    summary: '转黑白后强化质感与轮廓，用暗角收束视线。',
+    prompt: '黑白纪实：转换为黑白，强化纹理与清晰度让质感和轮廓突出，对比度适中偏强，阴影压深但保留暗部层次，高光不过曝，让主体与背景的灰度拉开距离，加轻微暗角把视线收拢到主体，必要时做少量降噪；避免死黑和硬边光晕。',
+  },
+  {
+    id: 'vintage-sepia',
+    name: '复古暖褐',
+    tag: '风格化',
+    summary: '暖黄褐色调、褪色感与颗粒，像一张旧照片。',
+    prompt: '复古暖褐胶片：整体色调偏暖黄褐，阴影抬起并带一点褪色感，高光加暖，饱和度整体降低但保留红黄的厚度，给阴影暖褐、高光淡黄做分离色调，加少量颗粒和暗角，对比度不要过强；避免画面发脏或肤色偏土黄。',
+  },
+  {
+    id: 'cool-editorial',
+    name: '冷调高级灰',
+    tag: '商业',
+    summary: '冷白平衡、低饱和、干净的灰调，适合产品与建筑。',
+    prompt: '冷调高级灰：白平衡稍微偏冷，整体饱和度明显降低做成低饱和灰调，对比度适中偏低让画面干净平整，阴影略带青灰，高光干净不透白，白色和灰色的层次要保留，适当锐化提升质感；避免画面发闷、发绿或出现色彩断层。',
+  },
+  {
+    id: 'moody-dark',
+    name: '暗调情绪',
+    tag: '氛围',
+    summary: '压低曝光与黑场，冷暗色调，适合夜景与雨天。',
+    prompt: '暗调情绪：曝光稍微压低，黑场压实、阴影压深但主体的暗部仍要看得清，对比度提高一点让光影更集中，把阴影推向冷蓝、高光保持中性偏暖，饱和度整体降低只在主体关键颜色上保留一点饱和度，加轻微暗角；避免大面积死黑和噪点被放大。',
+  },
+]
 // 调色参数表由后端注册表提供（GET /api/develop/controls），前端只保留兜底与解析工具。
 function genericControl(key: string): DevelopControl {
   return {
@@ -167,6 +233,9 @@ export default function App() {
   const [probeBusy, setProbeBusy] = useState(false)
   const [probeResult, setProbeResult] = useState<{ supported: string[]; unsupported: string[]; detail: string }>()
   const [lightroomWarning, setLightroomWarning] = useState('')
+  // 预设抽屉只改写创作说明（提示词），不直接写入 LrC 参数，抽屉关闭后提示仍可编辑。
+  const [showPresets, setShowPresets] = useState(false)
+  const [presetNotice, setPresetNotice] = useState('')
 
   const controlIndex = useMemo(() => {
     const index: Record<string, DevelopControl> = {}
@@ -307,6 +376,29 @@ export default function App() {
       window.clearInterval(interval)
     }
   }, [])
+
+  // 抽屉打开时按 Esc 关闭，与模型设置对话框的交互保持一致。
+  useEffect(() => {
+    if (!showPresets) return
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowPresets(false)
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [showPresets])
+
+  // 填入预设后的提示会自己消失，避免长期占用创作说明下方的位置。
+  useEffect(() => {
+    if (!presetNotice) return
+    const timer = window.setTimeout(() => setPresetNotice(''), 4000)
+    return () => window.clearTimeout(timer)
+  }, [presetNotice])
+
+  function applyPreset(preset: ColorPreset) {
+    setPrompt(preset.prompt.slice(0, PROMPT_MAX_LENGTH))
+    setPresetNotice(`已填入预设「${preset.name}」，可继续修改`)
+    setShowPresets(false)
+  }
 
   async function persistModelConfig() {
     const response = await fetch(`${API}/api/model/config`, {
@@ -641,6 +733,7 @@ export default function App() {
   const connected = Boolean(health)
   const hasSettings = Object.keys(settings).length > 0
   const allowedTotal = Object.values(allowedKeys).filter(Boolean).length
+  const activePreset = COLOR_PRESETS.find((preset) => preset.prompt === prompt)
   const displayedPreview = previewMode === 'lightroom' && lightroomPreviewUrl ? lightroomPreviewUrl : previewUrl
 
   return (
@@ -702,12 +795,27 @@ export default function App() {
           <section className="controls-panel" aria-label="AI 调色控制台">
             <div className="panel-toolbar">
               <div className="panel-title"><span className="step-number">02</span><span>调色方向</span></div>
-              <Sparkles size={16} className="sparkle-icon" />
+              <div className="toolbar-actions">
+                <Sparkles size={16} className="sparkle-icon" />
+                <button
+                  className={`preset-trigger ${activePreset ? 'is-active' : ''}`}
+                  onClick={() => setShowPresets(true)}
+                  aria-haspopup="dialog"
+                  aria-expanded={showPresets}
+                  title="打开调色预设抽屉，点击即可把提示词填入创作说明"
+                >
+                  <Palette size={13} />
+                  <span className="preset-trigger-label">{activePreset ? activePreset.name : '调色预设'}</span>
+                </button>
+              </div>
             </div>
             <div className="prompt-block">
               <label htmlFor="creative-brief">告诉 AI 你想要的感觉</label>
-              <textarea id="creative-brief" value={prompt} onChange={(event) => setPrompt(event.target.value)} maxLength={500} placeholder="例如：胶片感的暖调人像，肤色自然……" />
-              <div className="prompt-meta"><span>建议具体描述氛围、主体和需要保留的细节</span><span>{prompt.length}/500</span></div>
+              <textarea id="creative-brief" value={prompt} onChange={(event) => setPrompt(event.target.value)} maxLength={PROMPT_MAX_LENGTH} placeholder="例如：胶片感的暖调人像，肤色自然……" />
+              <div className="prompt-meta">
+                <span className={presetNotice ? 'is-notice' : ''}>{presetNotice || '建议具体描述氛围、主体和需要保留的细节'}</span>
+                <span>{prompt.length}/{PROMPT_MAX_LENGTH}</span>
+              </div>
             </div>
             <button className="generate-button" onClick={generate} disabled={busy || previewLoading || !health?.model_active}>
               {busy || previewLoading ? <span className="spinner" /> : <Sparkles size={17} />}
@@ -835,6 +943,45 @@ export default function App() {
       <footer className="app-footer">
         <span>Copyright 2026 <a href="">qincnd</a> All Rights Reserved</span>
       </footer>
+
+      {showPresets && <div className="drawer-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowPresets(false) }}>
+        <aside className="preset-drawer" role="dialog" aria-modal="true" aria-labelledby="preset-drawer-title">
+          <header className="drawer-heading">
+            <div>
+              <span className="dialog-kicker">COLOUR DIRECTIONS</span>
+              <h2 id="preset-drawer-title">调色预设</h2>
+            </div>
+            <button className="drawer-close" onClick={() => setShowPresets(false)} aria-label="关闭调色预设抽屉"><X size={18} /></button>
+          </header>
+          <p className="drawer-intro">选一个方向，提示词会填入「告诉 AI 你想要的感觉」，生成前仍可自由改写。</p>
+          <div className="preset-list">
+            {COLOR_PRESETS.map((preset) => {
+              const applied = activePreset?.id === preset.id
+              return (
+                <button
+                  className={`preset-card ${applied ? 'is-active' : ''}`}
+                  key={preset.id}
+                  onClick={() => applyPreset(preset)}
+                  aria-pressed={applied}
+                  title={`把「${preset.name}」的提示词填入创作说明`}
+                >
+                  <span className="preset-card-head">
+                    <strong>{preset.name}</strong>
+                    <em className="preset-tag">{preset.tag}</em>
+                    {applied && <span className="preset-applied"><Check size={11} />已填入</span>}
+                  </span>
+                  <span className="preset-summary">{preset.summary}</span>
+                  <span className="preset-prompt">{preset.prompt}</span>
+                </button>
+              )
+            })}
+          </div>
+          <footer className="drawer-footer">
+            <span>预设只改写创作说明：模型连接、参数授权与 LrC 渲染仍按右侧面板的当前设置执行。</span>
+            <button className="preset-clear" onClick={() => { setPrompt(''); setPresetNotice(''); setShowPresets(false) }} disabled={!prompt}>清空创作说明</button>
+          </footer>
+        </aside>
+      </div>}
 
       {showModelSettings && <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowModelSettings(false) }}>
         <section className="model-dialog" role="dialog" aria-modal="true" aria-labelledby="model-dialog-title">

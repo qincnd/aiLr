@@ -288,3 +288,41 @@ h1 em { color: var(--lime); font-style: normal; }
   .develop-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
   .develop-row-key { display: none; }
 }
+
+/* ---- 调色预设抽屉：从右侧滑入，点击卡片把提示词填入创作说明 ---- */
+.toolbar-actions { display: flex; align-items: center; gap: 10px; }
+.preset-trigger { display: inline-flex; align-items: center; gap: 6px; max-width: 186px; height: 23px; padding: 0 8px; border: 1px solid #5a4c3e; border-radius: 3px; background: transparent; color: #ded0bf; font-size: 9px; cursor: pointer; }
+.preset-trigger:hover { border-color: #c4a882; color: #e1c9a5; }
+.preset-trigger.is-active { border-color: #c4a882; background: #2b231b; color: #e6d3b6; }
+.preset-trigger svg { flex: 0 0 auto; color: #b89b72; }
+.preset-trigger-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prompt-meta .is-notice { color: #cfa878; }
+
+.drawer-backdrop { position: fixed; z-index: 10; inset: 0; display: flex; justify-content: flex-end; background: #100e0ccc; backdrop-filter: blur(5px); animation: veil-in .18s ease both; }
+.preset-drawer { width: min(400px, 100%); height: 100%; display: flex; flex-direction: column; padding: 26px 24px 20px; border-left: 1px solid #4a4036; background: #221d19; color: #ded4c7; box-shadow: -26px 0 70px #000000a8; animation: drawer-in .26s cubic-bezier(.2, .75, .3, 1) both; }
+@keyframes drawer-in { from { opacity: 0; transform: translateX(30px); } to { opacity: 1; transform: none; } }
+.drawer-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.drawer-heading h2 { margin: 5px 0 0; color: #f1e7da; font: 500 25px 'EB Garamond', 'Noto Serif SC', serif; }
+.drawer-close { width: 32px; height: 32px; flex: 0 0 auto; display: grid; place-items: center; border: 1px solid #5a4c3e; border-radius: 50%; background: transparent; color: #b7a795; cursor: pointer; }
+.drawer-close:hover { border-color: #c4a882; color: #e1c9a5; }
+.drawer-intro { margin: 10px 0 16px; color: #9a9083; font-size: 10px; line-height: 1.7; }
+.preset-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 9px; padding-right: 3px; }
+.preset-card { display: grid; gap: 6px; padding: 11px 12px; border: 1px solid #3f3831; border-radius: 3px; background: #1c1917; color: inherit; text-align: left; cursor: pointer; }
+.preset-card:hover { border-color: #8a6f4d; background: #26201b; }
+.preset-card.is-active { border-color: #c4a882; background: #2b231b; }
+.preset-card-head { display: flex; align-items: center; gap: 8px; }
+.preset-card-head strong { color: #eee3d4; font-size: 11px; font-weight: 600; }
+.preset-tag { padding: 1px 5px; border: 1px solid #5a4c3e; border-radius: 2px; color: #b9a892; font-size: 8px; font-style: normal; }
+.preset-applied { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; color: #c4a882; font-size: 8px; }
+.preset-summary { color: #9c9184; font-size: 9px; line-height: 1.65; }
+.preset-prompt { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; color: #6f6558; font: 8px 'DM Mono', monospace; line-height: 1.6; }
+.drawer-footer { margin-top: 15px; padding-top: 13px; border-top: 1px solid #3f3831; display: flex; flex-direction: column; gap: 10px; color: #7f7568; font-size: 8px; line-height: 1.7; }
+.preset-clear { align-self: flex-start; height: 28px; padding: 0 11px; border: 1px solid #4a4036; border-radius: 3px; background: transparent; color: #cfc3b1; font-size: 9px; cursor: pointer; }
+.preset-clear:hover:not(:disabled) { border-color: #c98b7c; color: #d9a196; }
+.preset-clear:disabled { opacity: .5; cursor: not-allowed; }
+@media (prefers-reduced-motion: reduce) { .drawer-backdrop, .preset-drawer { animation: none; } }
+@media (max-width: 540px) {
+  .toolbar-actions { gap: 7px; }
+  .preset-trigger { max-width: 118px; }
+  .preset-drawer { width: 100%; padding: 20px 16px 15px; }
+}

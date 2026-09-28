@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi.testclient import TestClient
 
+from app import presets
 from app.main import app
 from app.services.llm import (
     MAX_PARAMETER_REPAIR_ROUNDS,
@@ -102,6 +103,31 @@ def scripted_model(answers: list[str], provider: str = "ollama") -> Iterator[Scr
 
 
 class SuggestionOverflowRepairTests(unittest.IsolatedAsyncioTestCase):
+    async def test_preset_reference_block_reaches_the_model_as_a_suggestion(self) -> None:
+        """抽屉填进来的预设创作说明：建议区间原样送达，同时附上「不是强制规范」的说明。"""
+        brief = presets.load_presets()[0].instruction
+        with scripted_model([LEGAL_ANSWER]) as client:
+            await generate_suggestion(brief, b"image", "image/jpeg")
+
+        body = client.requests[0]
+        system = body["messages"][0]["content"]
+        user = body["messages"][1]["content"]
+
+        self.assertEqual(body["messages"][0]["role"], "system")
+        self.assertIn(presets.PARAMS_HINT_TITLE, user)
+        self.assertIn("高光(Highlights2012) +5~+10", user)
+        self.assertIn("nothing in it is mandatory", system)
+        self.assertIn("Do not ignore the block either", system)
+
+    async def test_plain_brief_stays_a_plain_brief(self) -> None:
+        """没有预设、只写一段文字时，提示里不会出现建议区间那段规则。"""
+        with scripted_model([LEGAL_ANSWER]) as client:
+            await generate_suggestion("自然通透", b"image", "image/jpeg")
+
+        body = client.requests[0]
+        self.assertEqual(body["messages"][1]["content"], "User direction: 自然通透")
+        self.assertNotIn("reference parameters", body["messages"][0]["content"])
+
     async def test_legal_answer_is_returned_without_a_repair_round(self) -> None:
         with scripted_model([LEGAL_ANSWER]) as client:
             result = await generate_suggestion("自然通透", b"image", "image/jpeg")

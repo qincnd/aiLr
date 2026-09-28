@@ -16,6 +16,15 @@ from app.config import (
     settings,
 )
 from app.model_runtime import runtime
+from app.presets import (
+    PresetDraft,
+    PresetError,
+    PresetFileError,
+    create_preset,
+    delete_preset,
+    load_presets,
+    presets_payload,
+)
 from app.services.image_processing import (
     ImagePreparationError,
     is_raw_image,
@@ -208,6 +217,48 @@ def health() -> dict[str, str | bool]:
 def develop_controls() -> dict[str, object]:
     """Every Lightroom Classic develop parameter aiLr can drive, grouped by panel."""
     return develop_controls_payload()
+
+
+@app.get("/api/presets")
+def list_presets() -> dict[str, object]:
+    """调色预设（创作说明模板）：来自项目根目录的 color_presets.json。"""
+    try:
+        return presets_payload()
+    except PresetFileError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+    except PresetError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.post("/api/presets", status_code=201)
+def add_preset(draft: PresetDraft) -> dict[str, object]:
+    """在网页里新建一条预设，写回 color_presets.json 并返回最新列表。"""
+    try:
+        created = create_preset(draft)
+        presets = load_presets()
+    except PresetFileError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+    except PresetError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {
+        "preset": created.model_dump(),
+        "presets": [preset.model_dump() for preset in presets],
+    }
+
+
+@app.delete("/api/presets/{preset_id}")
+def remove_preset(preset_id: str) -> dict[str, object]:
+    """删除一条预设并返回最新列表；预设文件本身也可以直接手工编辑。"""
+    try:
+        removed = delete_preset(preset_id)
+        presets = load_presets()
+    except PresetFileError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+    except PresetError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"没有找到 id 为 {preset_id} 的预设。")
+    return {"presets": [preset.model_dump() for preset in presets]}
 
 
 @app.get("/api/model/config")

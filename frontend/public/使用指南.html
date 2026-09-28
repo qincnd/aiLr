@@ -226,7 +226,7 @@ npm --prefix frontend run dev</code></pre>
           <h2><span class="step-no">06</span>网页调色流程</h2>
           <ol class="steps">
             <li><strong>选照片</strong>：把照片拖进画布或点选文件。普通图片上限 12 MB，RAW 上限 100 MB（可用 <code>.env</code> 里的 <code>AILR_MAX_IMAGE_MB</code> / <code>AILR_MAX_RAW_IMAGE_MB</code> 调整）。RAW 由后端按相机白平衡解码，并生成最长边 ≤ 2048px 的 JPEG 供网页显示和模型分析，<strong>原片不会被改写</strong>。</li>
-            <li><strong>写调色意图</strong>：例如「自然通透，保留天空层次，绿色不要过饱和」。可以写具体描述，也可以留空让模型自行判断。面板右上角的「调色预设」会从右侧滑出抽屉，内置 8 个中文调色方向（胶片暖调人像、自然通透风光、日系清新、电影感青橙、黑白纪实、复古暖褐、冷调高级灰、暗调情绪）；点卡片即把整段提示词填入输入框并关闭抽屉，之后仍可继续改写，按 Esc、点遮罩或点右上角 <code>×</code> 也能关闭。当前输入与某个预设完全一致时，卡片会标注「已填入」。</li>
+            <li><strong>写调色意图</strong>：例如「自然通透，保留天空层次，绿色不要过饱和」。可以写具体描述，也可以留空让模型自行判断；不选预设时输入框就是一段自由文本，和以前一样。面板右上角的「调色预设」会从右侧滑出抽屉，默认带 12 个中文调色方向（胶片暖调人像、自然通透风光、日系清新、电影感青橙、黑白纪实、复古暖褐、冷调高级灰、暗调情绪、霓虹夜景、美食暖调、宠物柔亮、街头硬调）；点卡片即把该方向的调色步骤、约束与参考参数合成的一段创作说明填入输入框并关闭抽屉，之后仍可继续改写，按 Esc、点遮罩或点右上角 <code>×</code> 也能关闭。当前输入与某个预设完全一致时，卡片会标注「已填入」。参考参数（整体强度与各滑块的建议区间）只是建议：后端会在系统提示里说明它不是强制规范，AI 按画面实际判断，但也不会整段忽略。抽屉右上角的<strong>「新建预设」</strong>可以就地写一个自己的方向（名称 / 分类 / 一句话描述 / 提示词 / <strong>参数参考</strong>：一行一个参数，参数名 + 建议区间，整块可留空；提示词默认用当前创作说明预填）。填了参数参考就保存成 <code>text</code> + <code>params_hint</code> 对象，留空则仍是一段纯文本字符串；参数名与建议怎么写见第 08 节的「参数参考」小节（表单里也放了一处直达链接）。保存后立刻写进项目根目录的 <code>color_presets.json</code> 并排到列表末尾；每张卡片右下角的「删除」需要两步确认。这个 JSON 也可以用文本编辑器直接改（<code>id</code> 可省略、<code>created_at</code> 由网页新建时自动写入），改完刷新网页即可生效。</li>
             <li><strong>生成调色方案</strong>：网页会把「允许大模型调整的参数集合」一起发给后端，模型以资深调色师的工作流作答（先读图诊断 → 先修影调与白平衡 → 再塑形与配色 → 最后细节与效果，且本插件只有全局滑块，不会承诺蒙版或局部调整），并按「基础滑块 + 按 LrC 面板分组的触发条件」返回一段中文说明 + Develop 参数（按需要 3–12 项，允许集合较小时该区间会自动收窄；默认允许集合为除实验参数与蒙版（效果面板的裁剪后暗角五项，默认关闭）外的全部 83 项，涵盖数值、枚举、开关与点曲线）。模型若给出未允许的参数名，或超出范围／枚举取值、类型不对的参数，后端会先把溢出清单连同原答案回传给模型，要求它在范围内重新作答（默认最多 2 轮）：修好的参数正常采用，仍未通过校验的参数会被丢弃并在面板上给出黄色提示，因此写进 LrC 的值一定在范围内；若所有参数都越界，网页会直接报错并建议重新生成（详见第 09 节）。<strong>暗角还多一层「伪蒙版」护栏</strong>：裁剪后暗角若会被画成画面上的一圈硬边圆形（圆度为正 + 羽化过低 + 数量拉满），同样会被打回重答，模型坚持不改时按安全窗口收敛（数量 ±60、羽化 ≥ 25、圆度 ≤ 25、中点 20–80、样式不用「绘制叠加」），每条改动会列在提示条的「已按防伪蒙版规则收敛」里；蒙版默认关闭，只有先在「参数微调」最上方的蒙版开关条里打开，暗角参数才会参与本次请求；网页手动拖动、插件与 MCP 不受这条限制。</li>
             <li><strong>检查并微调</strong>：「参数微调」标题下方是<strong>蒙版开关条</strong>——左侧总开关默认关闭（关闭时 AI 不会给出暗角参数，已加入的暗角值也会被移除），右侧 <code>关闭 / 轻 / 中 / 强</code> 按钮可一键把裁剪后暗角设为 -15 / -30 / -50（同时写入羽化 60、圆度 0、中点 50、样式 1，不会画出圆形硬边），之后仍可手动微调。右侧列出本次要写入 LrC 的全部参数，数值为滑块、枚举为下拉、开关为勾选框、点曲线为 <code>x,y;x,y</code> 文本框；每个参数右侧的 <code>×</code> 可把它从本次渲染中移除。步进由参数决定（曝光 0.05、色温 50、锐化半径 0.1，其余为 1）。往下是「全部 LrC 调色参数」面板，按 LrC 面板分区列出全部 107 项：<strong>左侧开关 = 是否允许大模型调整该参数</strong>（默认除实验参数与蒙版外全部允许），关掉某个开关时该参数也会退出本次渲染；<strong>行末 <code>＋</code> = 以当前值把参数加入本次渲染</strong>，加入后可直接拖动或下拉改值，再按 <code>×</code> 移除。</li>
             <li><strong>应用到 LrC 并预览</strong>：插件切到 Develop 模块、写入参数，再用 LrExportSession 渲染 2560px JPEG 回传网页；预览区会多出「原图 / LrC 渲染」切换。</li>
@@ -269,6 +269,7 @@ npm --prefix frontend run dev</code></pre>
         <section class="card" id="parameters">
           <h2><span class="step-no">08</span>参数范围</h2>
           <p>插件可写入 <strong>107 项</strong> LrC Develop 参数，按 LrC 面板分组如下；模型输出、网页滑块与插件写入受同一套定义约束（唯一真值源是 <code>backend/app/settings.py</code>，同时驱动网页、MCP 工具与 <code>Bridge.lua</code> 的参数表）。</p>
+          <p>本节末尾另有一节<strong><a href="#preset-params-hint">参数参考</a></strong>：调色预设里 <code>params_hint</code> 的参数名与建议区间怎么写、短名与 Lightroom 键名的完整对照表（新建预设表单里的链接就指向那里）。</p>
           <table>
             <thead><tr><th>LrC 面板</th><th>项数</th><th>包含内容举例</th></tr></thead>
             <tbody>
@@ -289,6 +290,79 @@ npm --prefix frontend run dev</code></pre>
           <p><strong>蒙版与局部调整</strong>（渐变、径向、画笔、主体 / 天空选择）、瑕疵修复、裁剪与旋转、镜头配置文件本身、直方图与色阶不在 LrC 插件接口范围内，仍请在 LrC 里完成。</p>
           <div class="note">「实验」两组共 19 项与 LrC 版本、镜头配置文件相关，<strong>默认不允许大模型调整</strong>（不会进入该次请求的参数字段）；需要时可在面板里手动打开它们的开关为该次请求解锁，或用行末的 <code>＋</code> 直接加入本次渲染；被宿主拒绝时只跳过该项。点「检测 LrC 支持」可让插件用只读的 <code>LrDevelopController.getValue</code> 逐项自检，不支持的参数会被置灰——该操作不会修改照片。</div>
           <p>色温属于「白平衡」类参数：LrC 中照片若处于「原照设置 / 自动」白平衡，写入数值会切换到自定义色温，肉眼变化可能较明显，建议在虚拟副本上试。</p>
+
+          <h3 id="preset-params-hint">参数参考：预设里的参数名与建议区间</h3>
+          <p>调色预设抽屉里「新建预设」表单的<strong>参数参考（可选）</strong>、以及 <code>color_presets.json</code> 里 <code>prompt.params_hint</code> 的内容，都是<strong>给 AI 的建议</strong>：后端会把它合成「参考参数（建议，非强制）：…」一行接在创作说明后面，随提示词一起发给模型。系统提示词里写明这组区间不是强制规范——AI 先读照片，必要时可以偏离并说明理由，但不能整段忽略。整块留空就完全不写这一行，预设退化成一段纯文本。</p>
+          <p><strong>怎么填：</strong>每行一个参数，左边写参数名、右边写建议（最多 16 行，每行建议 ≤32 个字符）；两格都填才会写进文件，不用的行删掉即可。建议的写法很自由，常见三类：<strong>区间</strong> <code>+5~+10</code>、<strong>单值</strong> <code>10</code>、<strong>带方向的文字</strong> <code>青蓝 220°~240°</code>；色温、锐化半径这类是绝对值，直接写真实数值，例如 <code>4200~4800</code>、<code>0.8~1.2</code>。整体力度另外用 <code>default_intensity</code>（0–1 的小数）表达，会合成「整体强度 0.8」；它只是写进说明的建议值，不参与数值计算，也不影响滑块位置。</p>
+          <p><strong>参数名怎么写：</strong>下表左列的<strong>短名</strong>最省事（表单的输入框会随输入提示，直接选即用），也可以写 Lightroom 键名或中文标签。用短名或键名时后端会补上中文标签与键名标注，模型不必猜「高光」指基本面板的高光还是颜色分级里的高光色相；中文标签则原样保留。名字写错也能保存（原样写进说明），只是模型可能不知道它指哪个滑块。</p>
+          <table>
+            <thead><tr><th>短名（推荐）</th><th>参数（中文标签）</th><th>Lightroom 键名</th><th>取值范围</th></tr></thead>
+            <tbody>
+              <tr><td><code>exposure</code></td><td>曝光</td><td><code>Exposure2012</code></td><td>-5 ~ 5</td></tr>
+              <tr><td><code>contrast</code></td><td>对比度</td><td><code>Contrast2012</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>highlights</code></td><td>高光</td><td><code>Highlights2012</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>shadows</code></td><td>阴影</td><td><code>Shadows2012</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>whites</code></td><td>白色色阶</td><td><code>Whites2012</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>blacks</code></td><td>黑色色阶</td><td><code>Blacks2012</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>texture</code></td><td>纹理</td><td><code>Texture</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>clarity</code></td><td>清晰度</td><td><code>Clarity2012</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>dehaze</code></td><td>去朦胧</td><td><code>Dehaze</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>vibrance</code></td><td>自然饱和度</td><td><code>Vibrance</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>saturation</code></td><td>饱和度</td><td><code>Saturation</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>temp</code></td><td>色温</td><td><code>Temperature</code></td><td>2000 ~ 50000</td></tr>
+              <tr><td><code>temperature</code></td><td>色温（同 <code>temp</code>）</td><td><code>Temperature</code></td><td>2000 ~ 50000</td></tr>
+              <tr><td><code>tint</code></td><td>色调</td><td><code>Tint</code></td><td>-150 ~ 150</td></tr>
+              <tr><td><code>grain</code></td><td>颗粒 数量</td><td><code>GrainAmount</code></td><td>0 ~ 100</td></tr>
+              <tr><td><code>sharpening</code></td><td>锐化 数量</td><td><code>Sharpness</code></td><td>0 ~ 150</td></tr>
+              <tr><td><code>vignette</code></td><td>裁剪后暗角 数量</td><td><code>PostCropVignetteAmount</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>shadow_tint</code></td><td>阴影 色相</td><td><code>ColorGradeShadowHue</code></td><td>0 ~ 360</td></tr>
+              <tr><td><code>midtone_tint</code></td><td>中间调 色相</td><td><code>ColorGradeMidtoneHue</code></td><td>0 ~ 360</td></tr>
+              <tr><td><code>highlight_tint</code></td><td>高光 色相</td><td><code>ColorGradeHighlightHue</code></td><td>0 ~ 360</td></tr>
+              <tr><td><code>red_sat</code></td><td>饱和度 红</td><td><code>SaturationAdjustmentRed</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>orange_sat</code></td><td>饱和度 橙色</td><td><code>SaturationAdjustmentOrange</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>yellow_sat</code></td><td>饱和度 黄</td><td><code>SaturationAdjustmentYellow</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>green_sat</code></td><td>饱和度 绿</td><td><code>SaturationAdjustmentGreen</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>aqua_sat</code></td><td>饱和度 浅绿色</td><td><code>SaturationAdjustmentAqua</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>blue_sat</code></td><td>饱和度 蓝</td><td><code>SaturationAdjustmentBlue</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>purple_sat</code></td><td>饱和度 紫色</td><td><code>SaturationAdjustmentPurple</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>magenta_sat</code></td><td>饱和度 洋红</td><td><code>SaturationAdjustmentMagenta</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>red_hue</code></td><td>色相 红</td><td><code>HueAdjustmentRed</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>orange_hue</code></td><td>色相 橙色</td><td><code>HueAdjustmentOrange</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>yellow_hue</code></td><td>色相 黄</td><td><code>HueAdjustmentYellow</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>green_hue</code></td><td>色相 绿</td><td><code>HueAdjustmentGreen</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>aqua_hue</code></td><td>色相 浅绿色</td><td><code>HueAdjustmentAqua</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>blue_hue</code></td><td>色相 蓝</td><td><code>HueAdjustmentBlue</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>purple_hue</code></td><td>色相 紫色</td><td><code>HueAdjustmentPurple</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>magenta_hue</code></td><td>色相 洋红</td><td><code>HueAdjustmentMagenta</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>red_lum</code></td><td>明亮度 红</td><td><code>LuminanceAdjustmentRed</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>orange_lum</code></td><td>明亮度 橙色</td><td><code>LuminanceAdjustmentOrange</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>yellow_lum</code></td><td>明亮度 黄</td><td><code>LuminanceAdjustmentYellow</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>green_lum</code></td><td>明亮度 绿</td><td><code>LuminanceAdjustmentGreen</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>aqua_lum</code></td><td>明亮度 浅绿色</td><td><code>LuminanceAdjustmentAqua</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>blue_lum</code></td><td>明亮度 蓝</td><td><code>LuminanceAdjustmentBlue</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>purple_lum</code></td><td>明亮度 紫色</td><td><code>LuminanceAdjustmentPurple</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>magenta_lum</code></td><td>明亮度 洋红</td><td><code>LuminanceAdjustmentMagenta</code></td><td>-100 ~ 100</td></tr>
+              <tr><td><code>grain_size</code></td><td>颗粒 大小</td><td><code>GrainSize</code></td><td>0 ~ 100</td></tr>
+              <tr><td><code>grain_frequency</code></td><td>颗粒 粗糙度</td><td><code>GrainFrequency</code></td><td>0 ~ 100</td></tr>
+              <tr><td><code>sharpen_radius</code></td><td>锐化 半径</td><td><code>SharpenRadius</code></td><td>0.5 ~ 3</td></tr>
+              <tr><td><code>sharpen_detail</code></td><td>锐化 细节</td><td><code>SharpenDetail</code></td><td>0 ~ 100</td></tr>
+              <tr><td><code>sharpen_masking</code></td><td>锐化 蒙版</td><td><code>SharpenEdgeMasking</code></td><td>0 ~ 100</td></tr>
+            </tbody>
+          </table>
+          <p>表外还有 59 项参数没有短名，需要时直接写 Lightroom 键名即可，例如 <code>ColorGradeGlobalHue</code>（全局 色相）、<code>SplitToningHighlightSaturation</code>（高光饱和度）、<code>LuminanceSmoothing</code>（减少杂色 明亮度）、<code>PostCropVignetteMidpoint</code>（暗角 中点）、<code>AutoTone</code>（自动调整色调）。白平衡预设、曲线预设、暗角样式、Upright 模式这类<strong>枚举</strong>参数与<strong>点曲线</strong>也可以写（例如 <code>"WhiteBalance": "日光"</code>）；完整清单与取值见本节上方的参数表，真值源是 <code>backend/app/settings.py</code>。</p>
+          <p><strong>存进 JSON 的样子：</strong>表单里正文写一段话、参数参考填两行，保存后是下面这个对象（<code>id</code> 与 <code>created_at</code> 由后端补上，这里省略；留空参数参考则仍写成一段字符串）；后端把两者合成为再下面的 <code>instruction</code>，点卡片填进输入框的就是它。</p>
+          <pre><code>{
+  "name": "银盐冷调",
+  "tags": ["风格化"],
+  "summary": "冷白、低饱和、干净的高光。",
+  "prompt": {
+    "text": "银盐冷调：白平衡偏冷，整体低饱和，高光干净，阴影略带青灰。",
+    "params_hint": { "temp": "4200~4800", "saturation": "-15~-8" }
+  }
+}</code></pre>
+          <pre><code>银盐冷调：白平衡偏冷，整体低饱和，高光干净，阴影略带青灰。
+参考参数（建议，非强制）：色温(Temperature) 4200~4800；饱和度(Saturation) -15~-8</code></pre>
+          <div class="note">中文标签会原样保留，例如把参数名写成 <code>"色温"</code> 就合成 <code>色温 4200~4800</code>；想让模型百分百对上滑块，用左列的短名或键名。参考参数只是写进提示词的建议：AI 偏离时要在说明里讲清理由，整段忽略则不合规。写入 LrC 的取值仍由本节上方的参数范围与后端的参数校验决定，建议区间不会绕过校验。</div>
         </section>
 
         <section class="card" id="troubleshooting">
@@ -310,6 +384,17 @@ npm --prefix frontend run dev</code></pre>
               <p><strong>现象：</strong>预览里的照片上出现一圈明显的圆形边界，圆内圆外亮度不同，看起来像有人加了一块径向（圆形）蒙版。</p>
               <p><strong>原因：</strong>插件只会写全局滑块，不会创建蒙版或局部调整，网页本身也不做像素合成；画面上能出现圆形的只有「效果 → 裁剪后暗角」这一组参数——圆度为正会把暗角画成画面里的圆（横构图左右两侧就会露出一圈弧线），羽化接近 0 会留下硬边，数量拉满则变成一圈明显的光晕/黑圈。</p>
               <p><strong>处理：</strong>①蒙版（裁剪后暗角）默认关闭，先在「参数微调」最上方的蒙版开关条里打开才会使用，因此这条排查多半在打开了蒙版、或手动加了暗角参数时才会遇到；打开后模型链路还有护栏：这类暗角值会和越界参数一样被打回模型重答，模型坚持不改时按安全窗口收敛（数量 ±60、羽化 ≥ 25、圆度 ≤ 25、中点 20–80、样式不用「绘制叠加」），提示条里会列出每条改动。②想自己判断来源，点画布右上角的「原图 / LrC 渲染」切换：<strong>原图里也有这个圆</strong>说明它是照片本身的镜头眩光/光斑（脏镜头、滤镜或对着太阳直拍都常见），滑块改不掉；<strong>只有 LrC 渲染里才有</strong>就是暗角参数造成的，把蒙版关掉（或点强度里的「关闭」）再重新生成即可，也可以手动把「暗角 圆度」拖回 0、「暗角 羽化」拉到 25 以上。③手工拖动、插件与 MCP 不受护栏限制，故意做圆形暗角仍然可用。</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>新建的调色预设保存在哪里？能改能删吗？</summary>
+            <div class="detail-body">
+              <p><strong>位置：</strong>项目根目录的 <code>color_presets.json</code>（既不在 <code>frontend/</code> 也不在 <code>backend/data/</code>）。内置的 12 个方向与网页新建的方向都在这一个文件里，后端 <code>backend/app/presets.py</code> 负责读写，因此也可以直接用文本编辑器增删条目，改完刷新网页即可生效，不需要重新构建前端。</p>
+              <p><strong>字段：</strong><code>name</code>（≤24 字）、<code>tags</code>（最多 4 个分类标签，每个 ≤8 字；旧写法 <code>tag</code> 单字符串仍可读）、<code>summary</code>（≤60 字，留空取创作说明前 48 字）、<code>default_intensity</code>（可选，0–1 的建议整体力度）、<code>prompt</code>（≤500 字。两种写法：对象形式 <code>steps</code>（最多 8 条、每条 ≤80 字）<strong>或</strong> <code>text</code>（一整段正文）二选一，另可带 <code>constraints</code>（最多 6 条）与 <code>params_hint</code>（最多 16 项建议区间，写法见第 08 节的「参数参考」）；或一整段字符串。不填参数参考时表单写的就是字符串）；<code>id</code> 可以省略（按名称生成，同名自动加 <code>-2</code> 后缀），<code>created_at</code> 由网页新建时自动写入，用于在卡片上标注「自建 · 日期」。</p>
+              <p><strong>创作说明：</strong>后端会把 <code>steps</code> 与 <code>constraints</code> 合成正文、把 <code>params_hint</code> 合成「参考参数（建议，非强制）」一行（短名补上中文标签与 Lightroom 键名，如 <code>highlights</code> → <code>高光(Highlights2012)</code>），整段作为 <code>instruction</code> 返回，点卡片就填进输入框、改完原样发给模型。建议区间不是强制规范：系统提示里会要求 AI 先读照片、必要时可以偏离并说明理由，但不能整段忽略。文件写回时统一标成 <code>version: "2.0"</code>，纯文本预设仍按字符串写回。</p>
+              <p><strong>网页新建 / 删除：</strong>抽屉右上角「新建预设」→ 填表（名称 / 分类 / 一句话描述 / 提示词 / <strong>参数参考</strong>）→「保存到 color_presets.json」，保存后立刻出现在列表末尾；参数参考一行一个参数（参数名 + 建议区间），可整块留空：填了就写成 <code>text</code> + <code>params_hint</code> 对象，留空则仍是一段字符串。卡片右下角「删除」→「确认删除」是两步确认。最多 50 条，重名会被拒绝（返回 400 并说明原因）。</p>
+              <p><strong>写入失败：</strong>文件缺失、不是合法 JSON 或缺少 <code>presets</code> 数组时接口返回 500 并指出第几行或第几项，抽屉里以红条显示；这类问题只影响预设抽屉，调色建议、参数授权与 LrC 渲染都不受影响。写回采用「临时文件 + 替换」并保持 UTF-8 无 BOM 与 CRLF，与仓库其它文本文件一致。</p>
             </div>
           </details>
 

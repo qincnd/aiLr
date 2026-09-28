@@ -330,16 +330,60 @@ h1 em { color: var(--lime); font-style: normal; }
 .drawer-close { width: 32px; height: 32px; flex: 0 0 auto; display: grid; place-items: center; border: 1px solid #5a4c3e; border-radius: 50%; background: transparent; color: #b7a795; cursor: pointer; }
 .drawer-close:hover { border-color: #c4a882; color: #e1c9a5; }
 .drawer-intro { margin: 10px 0 16px; color: #9a9083; font-size: 10px; line-height: 1.7; }
+.drawer-heading-actions { display: flex; align-items: center; gap: 8px; }
+.preset-new { display: inline-flex; align-items: center; gap: 5px; height: 32px; padding: 0 10px; border: 1px solid #5a4c3e; border-radius: 3px; background: transparent; color: #cfc3b1; font-size: 9px; cursor: pointer; }
+.preset-new:hover { border-color: #c4a882; color: #e1c9a5; }
+.preset-new.is-open { border-color: #c4a882; background: #2b231b; color: #e6d3b6; }
+.drawer-intro code { color: #c4a882; font: 9px 'DM Mono', monospace; }
+
+/* ---- 新建预设表单：提示词写进项目根目录的 color_presets.json ---- */
+.preset-form { flex: 0 0 auto; display: grid; gap: 9px; margin: 0 0 14px; padding: 12px; border: 1px solid #4a4036; border-radius: 3px; background: #1c1917; }
+.preset-form-row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 9px; }
+.preset-field { display: grid; gap: 5px; color: #9a9083; font-size: 9px; }
+.preset-field > span { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.preset-field small { color: #6f6558; font: 8px 'DM Mono', monospace; }
+.preset-field input, .preset-field textarea { width: 100%; padding: 7px 8px; border: 1px solid #4a4036; border-radius: 3px; background: #14120f; color: #e2d4bf; font: 10px 'DM Sans', system-ui, sans-serif; outline: none; }
+.preset-field input:focus, .preset-field textarea:focus { border-color: #8a6f4d; }
+.preset-field textarea { min-height: 92px; line-height: 1.65; resize: vertical; }
+/* 参数参考：每行「参数名 + 建议区间 + 删除」，可整块留空。 */
+.preset-hint-row { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) auto; gap: 6px; align-items: center; }
+.preset-hint-remove { width: 26px; min-height: 26px; align-self: stretch; display: grid; place-items: center; border: 1px solid #4a4036; border-radius: 3px; background: transparent; color: #8a7c6b; cursor: pointer; }
+.preset-hint-remove:hover { border-color: #c4a882; color: #e1c9a5; }
+.preset-hint-add { justify-self: start; display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px; border: 1px dashed #5a4c3e; border-radius: 3px; background: transparent; color: #b7a795; font-size: 9px; cursor: pointer; }
+.preset-hint-add:hover:not(:disabled) { border-color: #c4a882; color: #e1c9a5; }
+.preset-hint-add:disabled { opacity: .4; cursor: not-allowed; }
+.preset-form-actions { display: flex; align-items: center; gap: 8px; }
+.preset-save { height: 28px; padding: 0 12px; border: 1px solid #8a6f4d; border-radius: 3px; background: #2b231b; color: #e6d3b6; font-size: 9px; cursor: pointer; }
+.preset-save:hover:not(:disabled) { border-color: #c4a882; color: #f0dcc0; }
+.preset-save:disabled { opacity: .5; cursor: not-allowed; }
+.preset-cancel { height: 28px; padding: 0 11px; border: 1px solid #4a4036; border-radius: 3px; background: transparent; color: #cfc3b1; font-size: 9px; cursor: pointer; }
+.preset-cancel:hover { border-color: #c4a882; color: #e1c9a5; }
+.preset-error { margin: 0 0 12px; padding: 8px 10px; border: 1px solid #7d574c; border-radius: 3px; background: #2a1c1a; color: #d9a196; font-size: 9px; line-height: 1.65; }
+.preset-empty { margin: 0; padding: 14px 12px; border: 1px dashed #4a4036; border-radius: 3px; color: #8a7c6b; font-size: 9px; line-height: 1.7; }
 .preset-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 9px; padding-right: 3px; }
-.preset-card { display: grid; gap: 6px; padding: 11px 12px; border: 1px solid #3f3831; border-radius: 3px; background: #1c1917; color: inherit; text-align: left; cursor: pointer; }
+.preset-card { display: grid; padding: 0; border: 1px solid #3f3831; border-radius: 3px; background: #1c1917; }
 .preset-card:hover { border-color: #8a6f4d; background: #26201b; }
 .preset-card.is-active { border-color: #c4a882; background: #2b231b; }
-.preset-card-head { display: flex; align-items: center; gap: 8px; }
+.preset-card-pick { display: grid; gap: 6px; width: 100%; padding: 11px 12px 8px; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.preset-card-head { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; }
 .preset-card-head strong { color: #eee3d4; font-size: 11px; font-weight: 600; }
+.preset-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-left: auto; }
 .preset-tag { padding: 1px 5px; border: 1px solid #5a4c3e; border-radius: 2px; color: #b9a892; font-size: 8px; font-style: normal; }
-.preset-applied { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; color: #c4a882; font-size: 8px; }
+.preset-card-foot { display: flex; align-items: center; gap: 6px; padding: 0 12px 9px; }
+.preset-origin { color: #6f6558; font-size: 8px; }
+.preset-applied { display: inline-flex; align-items: center; gap: 4px; color: #c4a882; font-size: 8px; }
+.preset-delete { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; border: 1px solid transparent; border-radius: 2px; background: transparent; color: #6f6558; font-size: 8px; cursor: pointer; }
+.preset-delete:hover:not(:disabled) { border-color: #5a4c3e; color: #d9a196; }
+.preset-delete.is-confirm { border-color: #7d574c; color: #d9a196; }
+.preset-delete:disabled { opacity: .5; cursor: not-allowed; }
 .preset-summary { color: #9c9184; font-size: 9px; line-height: 1.65; }
-.preset-prompt { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; color: #6f6558; font: 8px 'DM Mono', monospace; line-height: 1.6; }
+.preset-prompt { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; color: #6f6558; font: 8px 'DM Mono', monospace; line-height: 1.6; }
+.preset-params { color: #8a7c6b; font-size: 8px; }
+.preset-hint { margin: 0; color: #7f7568; font-size: 8px; line-height: 1.65; }
+.preset-hint code { color: #c4a882; font: 8px 'DM Mono', monospace; }
+/* 合成预览：与后端 _compose_instruction() 写进创作说明的那一行同款写法。 */
+.preset-hint-preview { margin: 0; padding: 7px 8px; border: 1px dashed #4a4036; border-radius: 3px; background: #191614; color: #a89a88; font: 8px 'DM Mono', monospace; line-height: 1.75; word-break: break-word; }
+.preset-hint-preview small { display: block; margin-top: 3px; color: #6f6558; }
 .drawer-footer { margin-top: 15px; padding-top: 13px; border-top: 1px solid #3f3831; display: flex; flex-direction: column; gap: 10px; color: #7f7568; font-size: 8px; line-height: 1.7; }
 .preset-clear { align-self: flex-start; height: 28px; padding: 0 11px; border: 1px solid #4a4036; border-radius: 3px; background: transparent; color: #cfc3b1; font-size: 9px; cursor: pointer; }
 .preset-clear:hover:not(:disabled) { border-color: #c98b7c; color: #d9a196; }
@@ -349,4 +393,5 @@ h1 em { color: var(--lime); font-style: normal; }
   .toolbar-actions { gap: 7px; }
   .preset-trigger { max-width: 118px; }
   .preset-drawer { width: 100%; padding: 20px 16px 15px; }
+  .preset-form-row { grid-template-columns: minmax(0, 1fr); }
 }

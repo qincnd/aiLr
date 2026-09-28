@@ -16,6 +16,7 @@ import {
   Settings2,
   ShieldCheck,
   Sparkles,
+  Trash2,
   Upload,
   X,
 } from 'lucide-react'
@@ -93,71 +94,55 @@ const defaultModelConfig: ModelConfiguration = {
   openai_base_url: 'https://api.openai.com/v1',
   api_key: '',
 }
-// 预设调色方向：只提供提示词文案，点击后填进创作说明，仍由用户自由修改。
-// prompt 会作为 POST /api/suggestions 的 prompt 字段原样传给模型，所以描述保持
-// 「氛围 + 光影 + 颜色 + 需要保留的细节 + 要避免的问题」，且不超过输入框的 500 字上限。
-type ColorPreset = { id: string; name: string; tag: string; summary: string; prompt: string }
+// 预设调色方向（创作说明模板）来自项目根目录的 color_presets.json：网页通过
+// GET /api/presets 读取，抽屉里新建与删除都会写回同一个文件，因此前端不再硬编码文案。
+// 后端已经把每条预设的 steps / constraints / params_hint 合成好一句 instruction：点卡片就是把它
+// 填进创作说明输入框，之后仍可自由改写；没选预设时输入框就是一段自由文本，两种方式共用同一个框，
+// 所以「纯文本调色」这条路径一直保留。params_hint 合成的「参考参数」只是建议，不是强制规范。
+type PresetPrompt = {
+  steps: string[]
+  constraints: string[]
+  params_hint: Record<string, string>
+  text: string
+  structured: boolean
+}
+type ColorPreset = {
+  id: string
+  name: string
+  tags: string[]
+  summary: string
+  prompt: PresetPrompt
+  instruction: string
+  default_intensity?: number | null
+  created_at?: string
+}
+type PresetRegistry = { version?: string; presets: ColorPreset[]; file: string; path?: string; params_hint_options?: PresetHintOption[] }
+// 「参数参考」的候选参数名：name 写进 JSON 的键，label 是后端合成创作说明时的标注
+// （highlights -> 高光(Highlights2012)），所以表单预览与最终发给模型的那一行完全一致。
+type PresetHintOption = { name: string; label: string }
+// 表单里的一行参数参考：参数名 + 建议区间；两格都填了才写进 params_hint。
+type PresetHintRow = { name: string; value: string }
+type PresetDraft = { name: string; tag: string; summary: string; prompt: string; hints: PresetHintRow[] }
 
 const PROMPT_MAX_LENGTH = 500
+const PRESET_NAME_MAX_LENGTH = 24
+const PRESET_TAG_MAX_LENGTH = 8
+const PRESET_SUMMARY_MAX_LENGTH = 60
+// 与 backend/app/presets.py 的 PRESET_HINT_* 保持一致。
+const PRESET_HINT_MAX_COUNT = 16
+const PRESET_HINT_KEY_MAX_LENGTH = 24
+const PRESET_HINT_VALUE_MAX_LENGTH = 32
+// 参考参数那一行的固定标题，与后端 presets.PARAMS_HINT_TITLE 一致（llm.py 靠它识别建议块）。
+const PARAMS_HINT_TITLE = '参考参数（建议，非强制）：'
+// 每次都发一份全新的草稿：hints 是数组，共用同一个常量容易被就地改到。
+const emptyPresetDraft = (): PresetDraft => ({
+  name: '',
+  tag: '',
+  summary: '',
+  prompt: '',
+  hints: [{ name: '', value: '' }],
+})
 
-const COLOR_PRESETS: ColorPreset[] = [
-  {
-    id: 'film-portrait',
-    name: '胶片暖调人像',
-    tag: '人像',
-    summary: '暖调肤色、微微褪色的阴影与轻颗粒，适合日常与婚礼照片。',
-    prompt: '胶片质感的暖调人像：肤色干净通透带一点奶油感，高光加暖、阴影稍微抬起并带轻微褪色感，整体饱和度降低但保留衣服和背景的色彩层次，加少量颗粒和轻微暗角；避免肤色发黄发橙，脸颊和额头保留细节。',
-  },
-  {
-    id: 'natural-landscape',
-    name: '自然通透风光',
-    tag: '风光',
-    summary: '先把白平衡与影调校正好，天空有层次，绿色不过饱和。',
-    prompt: '自然通透的风光：先把白平衡校正到准确中性，收回高光保留云层层次，提起阴影让暗部有细节但不发灰，压实黑场，适当增加清晰度和少量去朦胧让远山有层次，绿色与蓝色饱和度克制一些；避免整体过饱和和天空出现色块。',
-  },
-  {
-    id: 'japanese-fresh',
-    name: '日系清新',
-    tag: '日常',
-    summary: '高调明亮、低对比、淡青绿，适合生活与少女感人像。',
-    prompt: '日系清新：整体明亮通透，曝光略微提升、阴影提起，降低对比度让画面柔和，白平衡稍微偏冷带一点青绿，肤色干净白皙不要发红，饱和度整体降低但保留淡雅的花草颜色，清晰度略微降低让皮肤更柔；避免过曝和灰雾感。',
-  },
-  {
-    id: 'cinematic-teal-orange',
-    name: '电影感青橙',
-    tag: '风格化',
-    summary: '阴影青蓝、高光暖橙，压得住画面同时保住肤色。',
-    prompt: '电影感青橙调：颜色分级里把阴影推向青蓝、高光推向暖橙，中间调保持中性以保住肤色，整体对比适中并稍微压一点高光，压实黑场但保留暗部细节，饱和度整体略降；人像要保证肤色不发绿不发紫，必要时用混色器单独微调橙色和肤色。',
-  },
-  {
-    id: 'mono-documentary',
-    name: '黑白纪实',
-    tag: '风格化',
-    summary: '转黑白后强化质感与轮廓，用暗角收束视线。',
-    prompt: '黑白纪实：转换为黑白，强化纹理与清晰度让质感和轮廓突出，对比度适中偏强，阴影压深但保留暗部层次，高光不过曝，让主体与背景的灰度拉开距离，加轻微暗角把视线收拢到主体，必要时做少量降噪；避免死黑和硬边光晕。',
-  },
-  {
-    id: 'vintage-sepia',
-    name: '复古暖褐',
-    tag: '风格化',
-    summary: '暖黄褐色调、褪色感与颗粒，像一张旧照片。',
-    prompt: '复古暖褐胶片：整体色调偏暖黄褐，阴影抬起并带一点褪色感，高光加暖，饱和度整体降低但保留红黄的厚度，给阴影暖褐、高光淡黄做分离色调，加少量颗粒和暗角，对比度不要过强；避免画面发脏或肤色偏土黄。',
-  },
-  {
-    id: 'cool-editorial',
-    name: '冷调高级灰',
-    tag: '商业',
-    summary: '冷白平衡、低饱和、干净的灰调，适合产品与建筑。',
-    prompt: '冷调高级灰：白平衡稍微偏冷，整体饱和度明显降低做成低饱和灰调，对比度适中偏低让画面干净平整，阴影略带青灰，高光干净不透白，白色和灰色的层次要保留，适当锐化提升质感；避免画面发闷、发绿或出现色彩断层。',
-  },
-  {
-    id: 'moody-dark',
-    name: '暗调情绪',
-    tag: '氛围',
-    summary: '压低曝光与黑场，冷暗色调，适合夜景与雨天。',
-    prompt: '暗调情绪：曝光稍微压低，黑场压实、阴影压深但主体的暗部仍要看得清，对比度提高一点让光影更集中，把阴影推向冷蓝、高光保持中性偏暖，饱和度整体降低只在主体关键颜色上保留一点饱和度，加轻微暗角；避免大面积死黑和噪点被放大。',
-  },
-]
 // 蒙版 = 效果面板里的「裁剪后暗角」五项。默认关闭：关闭时大模型不会被允许给出这组参数，
 // 已经加入本次渲染的蒙版值也会被移除。强度快捷键给出的取值都落在不会画出圆形硬边的窗口内
 // （圆度 0、羽化 60、中点 50，数量由按钮决定），用户可以再在参数里手动微调。
@@ -225,6 +210,33 @@ function formatSettingValue(value: SettingValue | undefined): string {
   return value ? curveToText(value) : ''
 }
 
+// 抽屉卡片的两行预览：正文取步骤（纯文本预设就取它那段话），另一行标注强度与建议参数条数。
+// 真正发给模型的是后端合成好的 instruction，卡片刻意不铺开整段，免得列表太长。
+function presetPreview(preset: ColorPreset) {
+  return preset.prompt.structured ? preset.prompt.steps.join('；') : preset.prompt.text
+}
+
+function presetMeta(preset: ColorPreset) {
+  const hints = Object.keys(preset.prompt.params_hint ?? {}).length
+  const parts: string[] = []
+  if (hints > 0) parts.push(`参考参数 ${hints} 项`)
+  if (preset.default_intensity) parts.push(`强度 ${preset.default_intensity}`)
+  return parts.join(' · ')
+}
+
+// 后端自检的报错是中文 detail 字符串；FastAPI 的请求体校验失败会给 detail 数组。
+function readFailure(data: unknown, fallback: string): string {
+  if (data && typeof data === 'object' && 'detail' in data) {
+    const detail = (data as { detail: unknown }).detail
+    if (typeof detail === 'string' && detail) return detail
+    if (Array.isArray(detail) && detail.length > 0) {
+      const first = detail[0] as { msg?: unknown }
+      if (typeof first?.msg === 'string') return `${fallback}（${first.msg}）`
+    }
+  }
+  return fallback
+}
+
 export default function App() {
   const [photo, setPhoto] = useState<File | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string>()
@@ -265,6 +277,16 @@ export default function App() {
   // 预设抽屉只改写创作说明（提示词），不直接写入 LrC 参数，抽屉关闭后提示仍可编辑。
   const [showPresets, setShowPresets] = useState(false)
   const [presetNotice, setPresetNotice] = useState('')
+  // 预设来自后端读取的 color_presets.json；新建与删除都写回这个文件，所以列表以接口返回为准。
+  const [presets, setPresets] = useState<ColorPreset[]>([])
+  const [presetsFile, setPresetsFile] = useState('color_presets.json')
+  const [presetsError, setPresetsError] = useState('')
+  const [presetFormOpen, setPresetFormOpen] = useState(false)
+  const [presetDraft, setPresetDraft] = useState<PresetDraft>(emptyPresetDraft())
+  // 新建表单的「参数参考」候选名（后端随预设一起返回），用于 datalist 与合成预览。
+  const [presetHintOptions, setPresetHintOptions] = useState<PresetHintOption[]>([])
+  const [presetBusy, setPresetBusy] = useState(false)
+  const [pendingDelete, setPendingDelete] = useState('')
 
   const controlIndex = useMemo(() => {
     const index: Record<string, DevelopControl> = {}
@@ -274,6 +296,13 @@ export default function App() {
 
   // 蒙版 = 后端注册表里的 mask_keys（效果面板的裁剪后暗角五项）。
   const maskKeys = useMemo(() => registry?.mask_keys ?? [], [registry])
+
+  // 参数参考的候选名 -> 后端标注：数据来自 presets.params_hint_options()，与预设同一个请求返回，
+  // 所以表单里预览的那一行和后端合成进创作说明的那一行写法完全一致。
+  const presetHintLabels = useMemo(
+    () => new Map(presetHintOptions.map((option) => [option.name, option.label])),
+    [presetHintOptions],
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -366,6 +395,28 @@ export default function App() {
     return () => { cancelled = true }
   }, [])
 
+  // 调色预设与参数表一样只在挂载时拉一次：抽屉里的新建与删除用接口返回的最新列表覆盖。
+  useEffect(() => {
+    let cancelled = false
+    fetch(`${API}/api/presets`)
+      .then(async (response) => {
+        const data = await response.json()
+        if (!response.ok) throw new Error(readFailure(data, '读取预设文件失败。'))
+        return data as PresetRegistry
+      })
+      .then((data) => {
+        if (cancelled) return
+        setPresets(data.presets ?? [])
+        setPresetsFile(data.file || 'color_presets.json')
+        setPresetHintOptions(data.params_hint_options ?? [])
+        setPresetsError('')
+      })
+      .catch((cause) => {
+        if (!cancelled) setPresetsError(cause instanceof Error ? cause.message : '读取预设文件失败。')
+      })
+    return () => { cancelled = true }
+  }, [])
+
   useEffect(() => {
     if (!showModelSettings || modelConfig.provider !== 'ollama') return
     let cancelled = false
@@ -409,15 +460,20 @@ export default function App() {
     }
   }, [])
 
-  // 抽屉打开时按 Esc 关闭，与模型设置对话框的交互保持一致。
+  // 抽屉打开时按 Esc 关闭，与模型设置对话框的交互保持一致；新建表单展开时先收起表单。
   useEffect(() => {
     if (!showPresets) return
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setShowPresets(false)
+      if (event.key !== 'Escape') return
+      if (presetFormOpen) {
+        setPresetFormOpen(false)
+        return
+      }
+      setShowPresets(false)
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [showPresets])
+  }, [showPresets, presetFormOpen])
 
   // 填入预设后的提示会自己消失，避免长期占用创作说明下方的位置。
   useEffect(() => {
@@ -426,10 +482,118 @@ export default function App() {
     return () => window.clearTimeout(timer)
   }, [presetNotice])
 
+  // 点卡片只改写创作说明：填入的是后端按 steps / constraints / params_hint 合成好的整段文字，
+  // 用户可以继续删改，也可以直接清空改成自己的纯文本方向。
   function applyPreset(preset: ColorPreset) {
-    setPrompt(preset.prompt.slice(0, PROMPT_MAX_LENGTH))
+    setPrompt(preset.instruction.slice(0, PROMPT_MAX_LENGTH))
     setPresetNotice(`已填入预设「${preset.name}」，可继续修改`)
     setShowPresets(false)
+  }
+
+  // 表单里的参数参考：成对填写的行才进 params_hint，整块留空就完全不写。
+  const presetHintItems = presetDraft.hints
+    .map((row) => ({ name: row.name.trim(), value: row.value.trim() }))
+    .filter((row) => row.name && row.value)
+    .map((row) => `${presetHintLabels.get(row.name) ?? row.name} ${row.value}`)
+  // 合成预览与长度：与后端 _compose_instruction() 一致，参考参数另起一行接在正文后面。
+  const presetHintLine = presetHintItems.length ? PARAMS_HINT_TITLE + presetHintItems.join('；') : ''
+  const presetDraftLength = presetDraft.prompt.trim().length + (presetHintLine ? presetHintLine.length + 1 : 0)
+
+  function updateHintRow(index: number, patch: Partial<PresetHintRow>) {
+    setPresetDraft((draft) => ({
+      ...draft,
+      hints: draft.hints.map((row, position) => (position === index ? { ...row, ...patch } : row)),
+    }))
+  }
+
+  function addHintRow() {
+    setPresetDraft((draft) => (
+      draft.hints.length >= PRESET_HINT_MAX_COUNT ? draft : { ...draft, hints: [...draft.hints, { name: '', value: '' }] }
+    ))
+  }
+
+  function removeHintRow(index: number) {
+    // 始终留一行：想清空时直接删掉输入内容即可，不必先删行再加行。
+    setPresetDraft((draft) => ({
+      ...draft,
+      hints: draft.hints.length > 1
+        ? draft.hints.filter((_row, position) => position !== index)
+        : [{ name: '', value: '' }],
+    }))
+  }
+
+  // 新建表单用当前创作说明预填提示词：多数时候用户是在改写一段已有的意图。
+  // 只填提示词时按纯文本形态写入；再填上「参数参考」，后端就写成 { text, params_hint } 对象。
+  function openPresetForm() {
+    setPresetFormOpen(true)
+    setPendingDelete('')
+    setPresetsError('')
+    setPresetDraft({ ...emptyPresetDraft(), prompt: prompt.slice(0, PROMPT_MAX_LENGTH) })
+  }
+
+  async function createPresetFromDraft() {
+    if (presetBusy) return
+    // 参数参考要么整行留空、要么两格都填：半行会合成出没有取值的建议。
+    const rows = presetDraft.hints
+      .map((row) => ({ name: row.name.trim(), value: row.value.trim() }))
+      .filter((row) => row.name || row.value)
+    if (rows.some((row) => !row.name || !row.value)) {
+      setPresetsError('参数参考要成对填写：每行都写上参数名与建议区间，用不到的行请删掉。')
+      return
+    }
+    if (new Set(rows.map((row) => row.name)).size !== rows.length) {
+      setPresetsError('参数参考里有重复的参数名，请合并成一行。')
+      return
+    }
+    if (presetDraftLength > PROMPT_MAX_LENGTH) {
+      setPresetsError(`提示词加上参考参数合成后共 ${presetDraftLength} 个字，超过 ${PROMPT_MAX_LENGTH} 字，请精简后再保存。`)
+      return
+    }
+    setPresetBusy(true)
+    setPresetsError('')
+    try {
+      const response = await fetch(`${API}/api/presets`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: presetDraft.name,
+          tag: presetDraft.tag,
+          summary: presetDraft.summary,
+          prompt: presetDraft.prompt,
+          // 留空就是空对象：后端据此决定写成字符串还是 { text, params_hint } 对象。
+          params_hint: Object.fromEntries(rows.map((row) => [row.name, row.value])),
+        }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(readFailure(data, '新建预设失败。'))
+      const created = data.preset as ColorPreset
+      setPresets(data.presets as ColorPreset[])
+      setPresetDraft(emptyPresetDraft())
+      setPresetFormOpen(false)
+      setPresetNotice(`已把「${created.name}」写入 ${presetsFile}`)
+    } catch (cause) {
+      setPresetsError(cause instanceof Error ? cause.message : '新建预设失败。')
+    } finally {
+      setPresetBusy(false)
+    }
+  }
+
+  async function removePreset(preset: ColorPreset) {
+    if (presetBusy) return
+    setPresetBusy(true)
+    setPresetsError('')
+    try {
+      const response = await fetch(`${API}/api/presets/${encodeURIComponent(preset.id)}`, { method: 'DELETE' })
+      const data = await response.json()
+      if (!response.ok) throw new Error(readFailure(data, '删除预设失败。'))
+      setPresets(data.presets as ColorPreset[])
+      setPendingDelete('')
+      setPresetNotice(`已从 ${presetsFile} 删除「${preset.name}」`)
+    } catch (cause) {
+      setPresetsError(cause instanceof Error ? cause.message : '删除预设失败。')
+    } finally {
+      setPresetBusy(false)
+    }
   }
 
   async function persistModelConfig() {
@@ -808,7 +972,7 @@ export default function App() {
     : typeof maskAmount === 'number'
       ? `已开启 · 当前裁剪后暗角数量 ${maskAmount}，可在下方参数里继续微调`
       : '已开启，但本次渲染还没有蒙版参数；点「轻 / 中 / 强」快速加入'
-  const activePreset = COLOR_PRESETS.find((preset) => preset.prompt === prompt)
+  const activePreset = presets.find((preset) => preset.instruction === prompt)
   const displayedPreview = previewMode === 'lightroom' && lightroomPreviewUrl ? lightroomPreviewUrl : previewUrl
 
   return (
@@ -1076,33 +1240,86 @@ export default function App() {
               <span className="dialog-kicker">COLOUR DIRECTIONS</span>
               <h2 id="preset-drawer-title">调色预设</h2>
             </div>
-            <button className="drawer-close" onClick={() => setShowPresets(false)} aria-label="关闭调色预设抽屉"><X size={18} /></button>
+            <div className="drawer-heading-actions">
+              <button
+                className={`preset-new ${presetFormOpen ? 'is-open' : ''}`}
+                onClick={() => (presetFormOpen ? setPresetFormOpen(false) : openPresetForm())}
+                aria-expanded={presetFormOpen}
+                title={`新建一个调色方向，保存到项目根目录的 ${presetsFile}`}
+              ><Plus size={13} />新建预设</button>
+              <button className="drawer-close" onClick={() => setShowPresets(false)} aria-label="关闭调色预设抽屉"><X size={18} /></button>
+            </div>
           </header>
-          <p className="drawer-intro">选一个方向，提示词会填入「告诉 AI 你想要的感觉」，生成前仍可自由改写。</p>
+          <p className="drawer-intro">选一个方向，它的调色步骤、约束与参考参数会合成一段创作说明填入「告诉 AI 你想要的感觉」，生成前仍可自由改写；不选预设时也可以直接写一段纯文本。内置与自建方向都保存在项目根目录的 <code>{presetsFile}</code>，也可以直接编辑这个文件。</p>
+          {presetFormOpen && <form className="preset-form" onSubmit={(event) => { event.preventDefault(); void createPresetFromDraft() }}>
+            <div className="preset-form-row">
+              <label className="preset-field"><span>名称</span><input autoFocus value={presetDraft.name} maxLength={PRESET_NAME_MAX_LENGTH} onChange={(event) => setPresetDraft({ ...presetDraft, name: event.target.value })} placeholder="例如：暮色江面" /></label>
+              <label className="preset-field"><span>分类</span><input value={presetDraft.tag} maxLength={PRESET_TAG_MAX_LENGTH} onChange={(event) => setPresetDraft({ ...presetDraft, tag: event.target.value })} placeholder="留空记作「自建」" /></label>
+            </div>
+            <label className="preset-field"><span>一句话描述 <small>{presetDraft.summary.length}/{PRESET_SUMMARY_MAX_LENGTH}</small></span><input value={presetDraft.summary} maxLength={PRESET_SUMMARY_MAX_LENGTH} onChange={(event) => setPresetDraft({ ...presetDraft, summary: event.target.value })} placeholder="留空则取提示词前 48 字" /></label>
+            <label className="preset-field"><span>提示词 <small>{presetDraft.prompt.length}/{PROMPT_MAX_LENGTH}</small></span><textarea value={presetDraft.prompt} maxLength={PROMPT_MAX_LENGTH} onChange={(event) => setPresetDraft({ ...presetDraft, prompt: event.target.value })} placeholder="氛围 + 光影 + 颜色 + 要保留的细节 + 要避免的问题" /></label>
+            <div className="preset-field">
+              <span>参数参考（可选）<small>{presetHintItems.length}/{PRESET_HINT_MAX_COUNT} 项</small></span>
+              {presetDraft.hints.map((row, index) => (
+                <div className="preset-hint-row" key={index}>
+                  <input list="preset-hint-names" value={row.name} maxLength={PRESET_HINT_KEY_MAX_LENGTH} onChange={(event) => updateHintRow(index, { name: event.target.value })} placeholder="参数名，如 highlights" aria-label={`第 ${index + 1} 行参数名`} />
+                  <input value={row.value} maxLength={PRESET_HINT_VALUE_MAX_LENGTH} onChange={(event) => updateHintRow(index, { value: event.target.value })} placeholder="建议，如 +5~+10" aria-label={`第 ${index + 1} 行参数建议`} />
+                  <button type="button" className="preset-hint-remove" onClick={() => removeHintRow(index)} aria-label={`删掉第 ${index + 1} 行参数参考`} title="删掉这一行"><X size={11} /></button>
+                </div>
+              ))}
+              <button type="button" className="preset-hint-add" onClick={addHintRow} disabled={presetDraft.hints.length >= PRESET_HINT_MAX_COUNT}><Plus size={11} />加一行参数</button>
+              <datalist id="preset-hint-names">
+                {presetHintOptions.map((option) => <option value={option.name} label={option.label} key={option.name} />)}
+              </datalist>
+              <p className="preset-hint">整块留空就不写参考参数（预设按纯文本保存）。参数名可写短名 <code>highlights</code>、键名 <code>Highlights2012</code> 或中文标签，短名与键名会补成 <code>高光(Highlights2012)</code>；建议写成区间 <code>+5~+10</code> 或单值 <code>10</code>。参数名对照表与更多写法见 <a className="guide-inline-link" href={`${GUIDE_URL}#preset-params-hint`} target="_blank" rel="noreferrer">使用指南 · 参数参考</a>。</p>
+              {presetHintLine && <p className="preset-hint-preview">{presetHintLine}<small>合成后 {presetDraftLength}/{PROMPT_MAX_LENGTH} 字</small></p>}
+            </div>
+            <p className="preset-hint">要分步骤（<code>steps</code>）或写约束（<code>constraints</code>），直接编辑项目根目录的 {presetsFile}；表单填了参数参考就写成 <code>text</code> + <code>params_hint</code> 对象，没填则仍是一段字符串。</p>
+            <div className="preset-form-actions">
+              <button type="submit" className="preset-save" disabled={presetBusy || !presetDraft.name.trim() || !presetDraft.prompt.trim() || presetDraftLength > PROMPT_MAX_LENGTH}>{presetBusy ? '保存中…' : `保存到 ${presetsFile}`}</button>
+              <button type="button" className="preset-cancel" onClick={() => setPresetFormOpen(false)}>取消</button>
+            </div>
+          </form>}
+          {presetsError && <p className="preset-error" role="alert">{presetsError}</p>}
           <div className="preset-list">
-            {COLOR_PRESETS.map((preset) => {
+            {presets.length === 0 && !presetsError && <p className="preset-empty">还没有调色方向：点右上角「新建预设」写一个，或直接编辑 {presetsFile}。</p>}
+            {presets.map((preset) => {
               const applied = activePreset?.id === preset.id
               return (
-                <button
-                  className={`preset-card ${applied ? 'is-active' : ''}`}
-                  key={preset.id}
-                  onClick={() => applyPreset(preset)}
-                  aria-pressed={applied}
-                  title={`把「${preset.name}」的提示词填入创作说明`}
-                >
-                  <span className="preset-card-head">
-                    <strong>{preset.name}</strong>
-                    <em className="preset-tag">{preset.tag}</em>
-                    {applied && <span className="preset-applied"><Check size={11} />已填入</span>}
-                  </span>
-                  <span className="preset-summary">{preset.summary}</span>
-                  <span className="preset-prompt">{preset.prompt}</span>
-                </button>
+                <div className={`preset-card ${applied ? 'is-active' : ''}`} key={preset.id}>
+                  <button
+                    className="preset-card-pick"
+                    onClick={() => applyPreset(preset)}
+                    aria-pressed={applied}
+                    title={`把「${preset.name}」的创作说明填入输入框`}
+                  >
+                    <span className="preset-card-head">
+                      <strong>{preset.name}</strong>
+                      <span className="preset-tags">
+                        {preset.tags.map((tag) => <em className="preset-tag" key={tag}>{tag}</em>)}
+                      </span>
+                    </span>
+                    <span className="preset-summary">{preset.summary}</span>
+                    <span className="preset-prompt">{presetPreview(preset)}</span>
+                    {presetMeta(preset) && <span className="preset-params">{presetMeta(preset)}</span>}
+                  </button>
+                  <div className="preset-card-foot">
+                    {applied
+                      ? <span className="preset-applied"><Check size={11} />已填入</span>
+                      : <span className="preset-origin">{preset.created_at ? `自建 · ${preset.created_at}` : '内置方向'}</span>}
+                    {pendingDelete === preset.id ? <>
+                      <button className="preset-delete is-confirm" onClick={() => void removePreset(preset)} disabled={presetBusy}>确认删除</button>
+                      <button className="preset-delete" onClick={() => setPendingDelete('')}>取消</button>
+                    </> : (
+                      <button className="preset-delete" onClick={() => setPendingDelete(preset.id)} title={`从 ${presetsFile} 中删除这个方向`}><Trash2 size={11} />删除</button>
+                    )}
+                  </div>
+                </div>
               )
             })}
           </div>
           <footer className="drawer-footer">
-            <span>预设只改写创作说明：模型连接、参数授权与 LrC 渲染仍按右侧面板的当前设置执行。</span>
+            <span>预设只改写创作说明：模型连接、参数授权与 LrC 渲染仍按右侧面板的当前设置执行。参考参数（强度与区间）只是建议，AI 会按画面实际情况判断。</span>
             <button className="preset-clear" onClick={() => { setPrompt(''); setPresetNotice(''); setShowPresets(false) }} disabled={!prompt}>清空创作说明</button>
           </footer>
         </aside>

@@ -6,6 +6,7 @@ from typing import Any, Iterable
 import httpx
 
 from app.config import ModelConfig, OLLAMA_CONTEXT_SIZE, load_model_config
+from app.presets import PARAMS_HINT_LABEL
 from app.settings import (
     CORE_SETTING_KEYS,
     DEVELOP_CONTROLS,
@@ -35,6 +36,27 @@ SYSTEM_PROMPT_CONTRACT = """Answer with one JSON object holding summary and sett
 # Fixed part of every prompt: role, working method, output contract. The allowed
 # key lists are appended per request by _build_system_prompt.
 SYSTEM_PROMPT_HEAD = "\n".join((SYSTEM_PROMPT_ROLE, SYSTEM_PROMPT_CRAFT, SYSTEM_PROMPT_CONTRACT))
+
+# Appended when the brief carries the 「参考参数」 block that backend/app/presets.py composes
+# from a preset's params_hint (for example 「高光(Highlights2012) +5~+10；整体强度 0.8」).
+# Ranges copied from a look are a starting point, not a contract - the photo in front of the
+# model decides - but silently ignoring the whole block is just as wrong as copying it, so the
+# rule spells out both halves: not mandatory, and not to be dropped either.
+REFERENCE_PARAMS_RULE = (
+    "The brief may end with a reference block (参考参数, reference parameters) that lists the "
+    "approximate slider ranges and the overall strength of the look it was copied from, for "
+    "example \"高光(Highlights2012) +5~+10\" or \"整体强度 0.8\". Treat it as a suggestion from a "
+    "photographer who knows that look, not as a specification: nothing in it is mandatory, no "
+    "value is sent back to you for stepping outside it, and 整体强度 is only how strong the whole "
+    "look is meant to read - 1 is full strength, and photograph, subject and light outrank it. "
+    "Read the photo in front of you first: when the frame is already bright, warm or cool, or "
+    "needs different colour work than the look implies, follow the photo and say why in summary. "
+    "Do not ignore the block either - when the photo allows it, keep your values inside the "
+    "suggested ranges, use the keys it names instead of an equivalent slider, weigh the whole "
+    "block rather than one line of it, and never answer the same value for every hint. A hint "
+    "for a key that is not in your allowed lists is simply skipped, and the output contract above "
+    "wins if the two ever disagree."
+)
 
 # Only appended when the request unlocked the mask (the web UI mask switch): the Post Crop
 # vignette is the one effect that can draw a shape the eye reads as a region of the photo,
@@ -124,7 +146,9 @@ def _trigger_for(key: str) -> str:
     return _group_trigger(DEVELOP_CONTROLS[key].group)
 
 
-def _build_system_prompt(keys: Iterable[str] | None = None) -> str:
+def _build_system_prompt(
+    keys: Iterable[str] | None = None, reference_params: bool = False
+) -> str:
     """Prompt for one request; it only mentions the keys the caller allowed.
 
     The web UI lets the user switch single controls off, so every request can see a
@@ -132,6 +156,8 @@ def _build_system_prompt(keys: Iterable[str] | None = None) -> str:
     enums, boolean switches and point curves included. Keys the model is easy to
     overlook are grouped per Lightroom panel together with the trigger that makes
     the group worth using, because a flat list of them was ignored in practice.
+    reference_params is on when the brief carries a preset's 「参考参数」 block, so the
+    model learns how to weigh those suggested ranges before it reads them.
     """
     allowed = model_keys_for(keys)
     allowed_set = set(allowed)
@@ -158,6 +184,10 @@ def _build_system_prompt(keys: Iterable[str] | None = None) -> str:
             "- instead of stopping at one or two sliders."
         )
     sections = [SYSTEM_PROMPT_HEAD, scope]
+    if reference_params:
+        # A preset filled the brief, so say how to weigh its suggested ranges before the model
+        # reads them: not mandatory, judged against the photo, and not to be dropped either.
+        sections.append(REFERENCE_PARAMS_RULE)
     if set(VIGNETTE_SETTING_KEYS) & allowed_set:
         # The mask switch is on for this request, so the vignette rule applies.
         sections.append(VIGNETTE_RULE)
@@ -452,7 +482,7 @@ async def generate_suggestion(
     keys = model_keys_for(allowed_keys)
     if not keys:
         raise RuntimeError("请至少允许一个调色参数参与 AI 调整")
-    system_prompt = _build_system_prompt(keys)
+    system_prompt = _build_system_prompt(keys, reference_params=PARAMS_HINT_LABEL in prompt)
     encoded_image = base64.b64encode(image).decode("ascii")
     user_text = f"User direction: {prompt.strip() or 'Create a balanced natural edit.'}"
     messages = [_user_message(model_config.provider, user_text, encoded_image, mime_type)]

@@ -16,7 +16,13 @@ from app.settings import (
 )
 
 MASK_KEYS = set(VIGNETTE_SETTING_KEYS)
-from app.services.llm import _build_system_prompt, _ollama_response_schema, _parse_suggestion
+from app.presets import PARAMS_HINT_LABEL
+from app.services.llm import (
+    REFERENCE_PARAMS_RULE,
+    _build_system_prompt,
+    _ollama_response_schema,
+    _parse_suggestion,
+)
 
 
 class DevelopSettingsTests(unittest.TestCase):
@@ -444,6 +450,20 @@ class DevelopSettingsTests(unittest.TestCase):
                 ["Vibrance", "Saturation", "Exposure2012", "Contrast2012", "Texture", "Dehaze"]
             ),
         )
+
+    def test_system_prompt_explains_reference_parameters_only_for_presets(self) -> None:
+        """预设合成出来的「参考参数」块：不是强制规范，但也不能整段忽略。"""
+        plain = _build_system_prompt()
+        with_reference = _build_system_prompt(reference_params=True)
+
+        self.assertNotIn("reference parameters", plain)
+        self.assertIn(PARAMS_HINT_LABEL, with_reference)
+        self.assertIn("not as a specification", with_reference)
+        self.assertIn("nothing in it is mandatory", with_reference)
+        self.assertIn("Do not ignore the block either", with_reference)
+        self.assertIn("整体强度", with_reference)
+        # 这条规则只往系统提示里加一段话，不会顺手改动允许的键集合。
+        self.assertEqual(with_reference.replace(REFERENCE_PARAMS_RULE + "\n", ""), plain)
 
     def test_parse_suggestion_drops_keys_the_caller_disallowed(self) -> None:
         text = (

@@ -103,7 +103,9 @@ AILR_OPENAI_BASE_URL=https://api.openai.com/v1
 AILR_OPENAI_API_KEY=你的密钥
 ```
 
-也可将 `AILR_OPENAI_BASE_URL` 指向遵循 Chat Completions、支持图像输入和 JSON 输出的兼容服务。密钥只放在本地 `.env`，不要提交到 Git。
+也可以使用前端页面完成对云端大模型的配置，最后会将配置文件保存在backend/data/model_config.json 中
+
+
 
 ## MCP
 

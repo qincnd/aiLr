@@ -1,21 +1,25 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Activity,
   Aperture,
   ArrowDownToLine,
+  BookOpen,
   Check,
+  ChevronRight,
   Download,
   ImagePlus,
+  Plus,
   Power,
   RefreshCw,
   Save,
   Settings2,
+  ShieldCheck,
   Sparkles,
   Upload,
   X,
 } from 'lucide-react'
 
-type Suggestion = { summary: string; settings: Record<string, number> }
+type Suggestion = { summary: string; settings: Record<string, SettingValue> }
 type Health = { status: string; provider: 'ollama' | 'openai'; model: string; model_active: boolean; model_message: string; lightroom: string }
 type ModelConfiguration = {
   provider: 'ollama' | 'openai'
@@ -28,8 +32,29 @@ type ModelConfiguration = {
 type LocalModel = { name: string; size: number; modified_at: string; family: string; parameter_size: string }
 type LightroomStatus = { connected: boolean; selected_filename: string; last_seen_seconds: number | null }
 type LightroomAction = 'preview' | 'export'
+type DevelopKind = 'number' | 'enum' | 'bool' | 'curve'
+type SettingValue = number | string | boolean | number[][]
+type DevelopControl = {
+  key: string
+  label: string
+  group: string
+  controller: string
+  kind: DevelopKind
+  minimum: number
+  maximum: number
+  step: number
+  default: SettingValue
+  choices: [number | string, string][]
+  core: boolean
+  experimental: boolean
+  description: string
+}
+type DevelopGroup = { id: string; label: string; controls: DevelopControl[] }
+type DevelopRegistry = { groups: DevelopGroup[]; model_keys: string[]; core_keys: string[]; total: number }
 
 const API = 'http://127.0.0.1:8000'
+// 静态使用指南：随 Vite public/ 目录一起发布，地址 /使用指南.html
+const GUIDE_URL = encodeURI('/使用指南.html')
 const RAW_EXTENSIONS = new Set([
   '.3fr', '.ari', '.arw', '.bay', '.cap', '.cr2', '.cr3', '.crw', '.dcs', '.dcr',
   '.dng', '.drf', '.eip', '.erf', '.fff', '.gpr', '.iiq', '.k25', '.kdc', '.mef',
@@ -54,35 +79,56 @@ const defaultModelConfig: ModelConfiguration = {
   openai_base_url: 'https://api.openai.com/v1',
   api_key: '',
 }
-const controlLabels: Record<string, string> = {
-  Exposure2012: '曝光',
-  Contrast2012: '对比度',
-  Highlights2012: '高光',
-  Shadows2012: '阴影',
-  Whites2012: '白色色阶',
-  Blacks2012: '黑色色阶',
-  Temperature: '色温',
-  Tint: '色调',
-  Vibrance: '自然饱和度',
-  Saturation: '饱和度',
-  Texture: '纹理',
-  Clarity2012: '清晰度',
-  Dehaze: '去朦胧',
+// 调色参数表由后端注册表提供（GET /api/develop/controls），前端只保留兜底与解析工具。
+function genericControl(key: string): DevelopControl {
+  return {
+    key,
+    label: key,
+    group: 'basic',
+    controller: key,
+    kind: 'number',
+    minimum: -100,
+    maximum: 100,
+    step: 1,
+    default: 0,
+    choices: [],
+    core: false,
+    experimental: false,
+    description: '',
+  }
 }
-const limits: Record<string, [number, number]> = {
-  Exposure2012: [-5, 5],
-  Contrast2012: [-100, 100],
-  Highlights2012: [-100, 100],
-  Shadows2012: [-100, 100],
-  Whites2012: [-100, 100],
-  Blacks2012: [-100, 100],
-  Temperature: [2000, 50000],
-  Tint: [-150, 150],
-  Vibrance: [-100, 100],
-  Saturation: [-100, 100],
-  Texture: [-100, 100],
-  Clarity2012: [-100, 100],
-  Dehaze: [-100, 100],
+
+function parseReportList(report: string, prefix: string): string[] {
+  const line = report.split('\n').find((item) => item.startsWith(prefix))
+  if (!line) return []
+  return line.slice(prefix.length).split(',').map((item) => item.trim()).filter(Boolean)
+}
+
+function curveToText(value: SettingValue): string {
+  if (!Array.isArray(value)) return ''
+  return value.map((point) => `${point[0]},${point[1]}`).join(';')
+}
+
+function parseCurveText(text: string): number[][] | undefined {
+  const points: number[][] = []
+  for (const chunk of text.split(';')) {
+    const trimmed = chunk.trim()
+    if (!trimmed) continue
+    const parts = trimmed.split(',').map((part) => Number(part.trim()))
+    if (parts.length !== 2 || parts.some((part) => !Number.isFinite(part))) return undefined
+    if (parts[0] < 0 || parts[0] > 255 || parts[1] < 0 || parts[1] > 255) return undefined
+    points.push([parts[0], parts[1]])
+  }
+  if (points.length < 2) return undefined
+  if (points.some((point, index) => index > 0 && point[0] <= points[index - 1][0])) return undefined
+  return points
+}
+
+function formatSettingValue(value: SettingValue | undefined): string {
+  if (typeof value === 'number') return Number.isInteger(value) ? `${value}` : value.toFixed(2)
+  if (typeof value === 'boolean') return value ? '开' : '关'
+  if (typeof value === 'string') return value
+  return value ? curveToText(value) : ''
 }
 
 export default function App() {
@@ -112,6 +158,21 @@ export default function App() {
   const [modelError, setModelError] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [registry, setRegistry] = useState<DevelopRegistry>()
+  // 允许大模型调整的参数集合：默认除实验参数外全部允许，面板开关只控制这一范围。
+  const [allowedKeys, setAllowedKeys] = useState<Record<string, boolean>>({})
+  const [settings, setSettings] = useState<Record<string, SettingValue>>({})
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({ basic: true })
+  const [curveDrafts, setCurveDrafts] = useState<Record<string, string>>({})
+  const [probeBusy, setProbeBusy] = useState(false)
+  const [probeResult, setProbeResult] = useState<{ supported: string[]; unsupported: string[]; detail: string }>()
+  const [lightroomWarning, setLightroomWarning] = useState('')
+
+  const controlIndex = useMemo(() => {
+    const index: Record<string, DevelopControl> = {}
+    registry?.groups.forEach((group) => group.controls.forEach((control) => { index[control.key] = control }))
+    return index
+  }, [registry])
 
   useEffect(() => {
     let cancelled = false
@@ -183,6 +244,25 @@ export default function App() {
       setHealth(status)
       setModelConfig({ ...defaultModelConfig, ...config, api_key: '' })
     }).catch(() => setHealth(undefined))
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    fetch(`${API}/api/develop/controls`)
+      .then((response) => response.json() as Promise<DevelopRegistry>)
+      .then((data) => {
+        if (cancelled) return
+        setRegistry(data)
+        setAllowedKeys(
+          Object.fromEntries(
+            data.groups
+              .flatMap((group) => group.controls)
+              .map((control) => [control.key, !control.experimental]),
+          ),
+        )
+      })
+      .catch(() => { if (!cancelled) setRegistry(undefined) })
+    return () => { cancelled = true }
   }, [])
 
   useEffect(() => {
@@ -303,16 +383,33 @@ export default function App() {
       setError('先选择一张照片，再生成调色建议。')
       return
     }
+    const allowed = Object.entries(allowedKeys)
+      .filter(([, value]) => value)
+      .map(([key]) => key)
+    if (registry && allowed.length === 0) {
+      setError('请先在「全部 LrC 调色参数」面板里允许至少一个参数参与 AI 调整。')
+      return
+    }
     setBusy(true)
     setError('')
     const body = new FormData()
     body.append('photo', photo)
     body.append('prompt', prompt)
+    if (registry) body.append('allowed_keys', JSON.stringify(allowed))
     try {
       const response = await fetch(`${API}/api/suggestions`, { method: 'POST', body })
       const data = await response.json()
       if (!response.ok) throw new Error(data.detail || '请求失败，请检查模型服务。')
-      setSuggestion(data as Suggestion)
+      const parsed = data as Suggestion
+      const accepted = registry
+        ? Object.fromEntries(
+            Object.entries(parsed.settings).filter(([key]) => allowedKeys[key] !== false),
+          )
+        : parsed.settings
+      setSuggestion({ ...parsed, settings: accepted })
+      setSettings({ ...accepted })
+      setCurveDrafts({})
+      setLightroomWarning('')
       setLightroomPreviewUrl(undefined)
       setPreviewMode('original')
     } catch (cause) {
@@ -322,19 +419,142 @@ export default function App() {
     }
   }
 
-  function updateControl(name: string, value: number) {
-    setSuggestion((current) => current ? {
-      ...current,
-      settings: { ...current.settings, [name]: value },
-    } : current)
+  function resetLightroomPreview() {
     setLightroomPreviewUrl(undefined)
     setPreviewMode('original')
   }
 
+  function setSetting(key: string, value: SettingValue) {
+    setSettings((current) => ({ ...current, [key]: value }))
+    setLightroomWarning('')
+    resetLightroomPreview()
+  }
+
+  function removeSetting(key: string) {
+    setSettings((current) => {
+      const next = { ...current }
+      delete next[key]
+      return next
+    })
+    resetLightroomPreview()
+  }
+
+  function addSetting(control: DevelopControl) {
+    setSetting(control.key, control.default)
+  }
+
+  function toggleAllowed(control: DevelopControl) {
+    const allowed = allowedKeys[control.key] ?? !control.experimental
+    setAllowedKeys((current) => ({ ...current, [control.key]: !allowed }))
+    // 不再允许模型调整的参数也退出本次渲染，避免开关与写入值不一致。
+    if (allowed && control.key in settings) removeSetting(control.key)
+  }
+
+  function controlFor(key: string) {
+    return controlIndex[key] ?? genericControl(key)
+  }
+
+  function pickChoice(control: DevelopControl, raw: string): SettingValue {
+    const choice = control.choices.find(([value]) => String(value) === raw)
+    return choice ? choice[0] : raw
+  }
+
+  function updateCurve(key: string, text: string) {
+    setCurveDrafts((current) => ({ ...current, [key]: text }))
+    const points = parseCurveText(text)
+    if (points) setSetting(key, points)
+  }
+
+  function renderValueEditor(control: DevelopControl, value: SettingValue) {
+    if (control.kind === 'bool') {
+      return (
+        <label className="value-switch">
+          <input type="checkbox" checked={value === true} onChange={(event) => setSetting(control.key, event.target.checked)} />
+          <span>{value === true ? '开' : '关'}</span>
+        </label>
+      )
+    }
+    if (control.kind === 'enum') {
+      return (
+        <select className="value-select" value={String(value)} onChange={(event) => setSetting(control.key, pickChoice(control, event.target.value))}>
+          {control.choices.map(([choice, label]) => <option value={String(choice)} key={String(choice)}>{label}</option>)}
+        </select>
+      )
+    }
+    if (control.kind === 'curve') {
+      return (
+        <input
+          className="value-text"
+          value={curveDrafts[control.key] ?? curveToText(value)}
+          onChange={(event) => updateCurve(control.key, event.target.value)}
+          placeholder="0,0;64,52;128,132;255,255"
+          spellCheck={false}
+        />
+      )
+    }
+    return (
+      <input
+        type="range"
+        min={control.minimum}
+        max={control.maximum}
+        step={control.step}
+        value={typeof value === 'number' ? value : Number(control.default)}
+        onChange={(event) => setSetting(control.key, Number(event.target.value))}
+      />
+    )
+  }
+
+  async function probeLightroom() {
+    if (!lightroomStatus.connected) {
+      setLightroomError('LrC 插件未连接；请在 Lightroom Classic 菜单中启动 aiLr Bridge。')
+      return
+    }
+    setProbeBusy(true)
+    setProbeResult(undefined)
+    setLightroomError('')
+    try {
+      const createResponse = await fetch(`${API}/api/lightroom/jobs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'probe', settings: {} }),
+      })
+      const created = await createResponse.json()
+      if (!createResponse.ok) throw new Error(created.detail || '无法创建参数自检任务。')
+
+      let report = ''
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1000))
+        const statusResponse = await fetch(`${API}/api/lightroom/jobs/${created.job_id}`)
+        const status = await statusResponse.json()
+        if (!statusResponse.ok) throw new Error(status.detail || '无法读取参数自检状态。')
+        if (status.status === 'failed') throw new Error(status.error || '参数自检失败。')
+        if (status.report) {
+          report = status.report as string
+          break
+        }
+      }
+      if (!report) throw new Error('参数自检超时；请确认 LrC 已选中照片且 aiLr Bridge 正在运行。')
+
+      const supported = parseReportList(report, 'SUPPORTED=')
+      const unsupported = parseReportList(report, 'UNSUPPORTED=')
+      setProbeResult({ supported, unsupported, detail: report })
+      setLightroomMessage(`参数自检完成：当前 LrC 接受 ${supported.length} 项，拒绝 ${unsupported.length} 项`)
+    } catch (cause) {
+      setLightroomError(cause instanceof Error ? cause.message : '参数自检失败。')
+    } finally {
+      setProbeBusy(false)
+    }
+  }
+
   async function renderWithLightroom(action: LightroomAction) {
-    if (!suggestion || !photo) return
+    if (!photo) return
     setLightroomError('')
     setLightroomMessage('')
+    setLightroomWarning('')
+    if (Object.keys(settings).length === 0) {
+      setLightroomError('请先生成调色建议，或在下方参数面板手动加入至少一个参数。')
+      return
+    }
     if (!lightroomStatus.connected) {
       setLightroomError('LrC 插件未连接；请在 Lightroom Classic 菜单中启动 aiLr Bridge。')
       return
@@ -352,7 +572,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action,
-          settings: suggestion.settings,
+          settings,
           format: action === 'preview' ? 'JPEG' : exportFormat,
           quality: exportQuality,
           max_dimension: action === 'preview' ? 2560 : exportMaxDimension,
@@ -361,7 +581,7 @@ export default function App() {
       const created = await createResponse.json()
       if (!createResponse.ok) throw new Error(created.detail || '无法创建 Lightroom 渲染任务。')
 
-      let completed: { status: string; error?: string; filename?: string } | undefined
+      let completed: { status: string; error?: string; filename?: string; report?: string } | undefined
       for (let attempt = 0; attempt < 240; attempt += 1) {
         await new Promise((resolve) => window.setTimeout(resolve, 1000))
         const statusResponse = await fetch(`${API}/api/lightroom/jobs/${created.job_id}`)
@@ -374,6 +594,13 @@ export default function App() {
         }
       }
       if (!completed) throw new Error('Lightroom 渲染超时；请确认 LrC 仍打开且 aiLr Bridge 正在运行。')
+
+      // The plug-in reports the parameters this Lightroom build refused; the
+      // render still succeeds, so this stays a warning instead of an error.
+      const rejected = parseReportList(completed.report ?? '', 'REJECTED=')
+      if (rejected.length > 0) {
+        setLightroomWarning(`当前 LrC 拒绝了 ${rejected.length} 项参数并已跳过：${rejected.join('、')}`)
+      }
 
       const imageResponse = await fetch(`${API}/api/lightroom/jobs/${created.job_id}/image${action === 'export' ? '?download=true' : ''}`)
       if (!imageResponse.ok) throw new Error('Lightroom 已完成渲染，但网页无法读取输出文件。')
@@ -400,8 +627,9 @@ export default function App() {
   }
 
   function exportSettings() {
-    if (!suggestion) return
-    const blob = new Blob([JSON.stringify({ format: 'ailr-develop-settings-v1', ...suggestion }, null, 2)], { type: 'application/json' })
+    if (Object.keys(settings).length === 0) return
+    const payload = { format: 'ailr-develop-settings-v1', summary: suggestion?.summary ?? '', settings }
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
@@ -411,6 +639,8 @@ export default function App() {
   }
 
   const connected = Boolean(health)
+  const hasSettings = Object.keys(settings).length > 0
+  const allowedTotal = Object.values(allowedKeys).filter(Boolean).length
   const displayedPreview = previewMode === 'lightroom' && lightroomPreviewUrl ? lightroomPreviewUrl : previewUrl
 
   return (
@@ -423,6 +653,7 @@ export default function App() {
         <div className="topbar-center"><span className="crumb-muted">工作区</span><span className="crumb-divider">/</span><span>智能调色</span></div>
         <div className="topbar-right">
           <span className={`connection ${health?.model_active ? 'is-online' : ''}`}><i />{health?.model_active ? '模型已启动' : connected ? '模型未启动' : '等待连接'}</span>
+          <a className="guide-trigger" href={GUIDE_URL} target="_blank" rel="noreferrer" title="安装、联动与排查说明"><BookOpen size={15} />使用指南</a>
           <button className="settings-trigger" onClick={() => setShowModelSettings(true)}><Settings2 size={15} />模型设置</button>
         </div>
       </header>
@@ -484,18 +715,19 @@ export default function App() {
               {!busy && !previewLoading && <span className="button-shortcut">↵</span>}
             </button>
             {error && <div className="error-message" role="alert">{error}</div>}
-            <div className="controls-divider"><span>参数微调</span><span>{suggestion ? `${Object.keys(suggestion.settings).length} 项已生成` : '等待 AI 建议'}</span></div>
-            {suggestion ? (
+            <div className="controls-divider"><span>参数微调</span><span>{hasSettings ? `${Object.keys(settings).length} 项待应用` : '等待 AI 建议或手动添加'}</span></div>
+            {suggestion && <p className="suggestion-summary">{suggestion.summary}</p>}
+            {hasSettings ? (
               <>
-                <p className="suggestion-summary">{suggestion.summary}</p>
                 <div className="slider-list">
-                  {Object.entries(suggestion.settings).map(([name, value]) => {
-                    const [min, max] = limits[name] ?? [-100, 100]
-                    return <label className="slider-row" key={name}>
-                      <span className="slider-label">{controlLabels[name] ?? name}</span>
-                      <input type="range" min={min} max={max} step={name === 'Exposure2012' ? 0.1 : name === 'Temperature' ? 50 : 1} value={value} onChange={(event) => updateControl(name, Number(event.target.value))} />
-                      <span className="slider-value">{Number.isInteger(value) ? value : value.toFixed(1)}</span>
-                    </label>
+                  {Object.entries(settings).map(([name, value]) => {
+                    const control = controlFor(name)
+                    return <div className={`slider-row kind-${control.kind}`} key={name}>
+                      <span className="slider-label" title={`${control.key} → LrC ${control.controller}`}>{control.label}</span>
+                      {renderValueEditor(control, value)}
+                      <span className="slider-value">{formatSettingValue(value)}</span>
+                      <button className="slider-remove" onClick={() => removeSetting(name)} title="从本次渲染中移除该参数" aria-label={`移除 ${control.label}`}><X size={11} /></button>
+                    </div>
                   })}
                 </div>
                 <section className="lightroom-output" aria-label="Lightroom 渲染与导出">
@@ -515,14 +747,82 @@ export default function App() {
                     <button className="lrc-export-button" onClick={() => renderWithLightroom('export')} disabled={lightroomBusy || !lightroomStatus.connected}><Download size={14} />LrC 渲染并下载</button>
                   </div>
                   {lightroomError && <div className="lightroom-feedback feedback-error" role="alert">{lightroomError}</div>}
+                  {lightroomWarning && <div className="lightroom-feedback feedback-warning" role="status">{lightroomWarning}</div>}
                   {lightroomMessage && <div className="lightroom-feedback" role="status">{lightroomMessage}</div>}
-                  <p className="lightroom-disclaimer">预览/导出会把参数写入 LrC 当前照片的 Develop 历史，可在 Lightroom 中撤销。</p>
+                  <p className="lightroom-disclaimer">预览/导出会把参数写入 LrC 当前照片的 Develop 历史，可在 Lightroom 中撤销。<a className="guide-inline-link" href={GUIDE_URL} target="_blank" rel="noreferrer">首次接入 / 报错排查 →</a></p>
                 </section>
                 <button className="export-button" onClick={exportSettings}><ArrowDownToLine size={16} />导出调色参数<span>.JSON</span></button>
               </>
             ) : (
-              <div className="empty-controls"><span className="empty-mark"><Sparkles size={17} /></span><span>生成后，参数会在这里逐项呈现<br />你可以检查并手动微调</span></div>
+              <div className="empty-controls"><span className="empty-mark"><Sparkles size={17} /></span><span>生成后，参数会在这里逐项呈现<br />也可以直接在下方参数面板手动添加</span></div>
             )}
+
+            <section className="develop-browser" aria-label="全部 Lightroom 调色参数">
+              <div className="develop-browser-head">
+                <div>
+                  <strong>全部 LrC 调色参数</strong>
+                  <span>{registry ? `共 ${registry.total} 项 · 已允许 ${allowedTotal} 项参与 AI，按 ＋ 加入本次渲染` : '参数表未加载（请确认后端已启动）'}</span>
+                </div>
+                <div className="develop-browser-actions">
+                  <button className="probe-button" onClick={probeLightroom} disabled={probeBusy || !lightroomStatus.connected}>
+                    {probeBusy ? <span className="spinner" /> : <ShieldCheck size={13} />}
+                    {probeBusy ? '检测中…' : '检测 LrC 支持'}
+                  </button>
+                  {hasSettings && <button className="clear-button" onClick={() => { setSettings({}); setCurveDrafts({}); resetLightroomPreview() }}>清空参数</button>}
+                </div>
+              </div>
+              {probeResult && (
+                <p className="probe-summary">
+                  当前 LrC 接受 {probeResult.supported.length} 项、拒绝 {probeResult.unsupported.length} 项
+                  {probeResult.unsupported.length > 0 && `：${probeResult.unsupported.slice(0, 6).join('、')}${probeResult.unsupported.length > 6 ? ' 等' : ''}`}
+                </p>
+              )}
+              {registry?.groups.map((group) => {
+                const open = openGroups[group.id] ?? false
+                const activeCount = group.controls.filter((control) => control.key in settings).length
+                const allowedCount = group.controls.filter((control) => allowedKeys[control.key] ?? !control.experimental).length
+                return (
+                  <div className={`develop-group ${open ? 'is-open' : ''}`} key={group.id}>
+                    <button className="develop-group-head" onClick={() => setOpenGroups((current) => ({ ...current, [group.id]: !open }))} aria-expanded={open}>
+                      <ChevronRight size={13} className="group-chevron" />
+                      <span>{group.label}</span>
+                      <small>{activeCount > 0 ? `允许 ${allowedCount} · 已加入 ${activeCount}` : `${allowedCount}/${group.controls.length} 项允许 AI`}</small>
+                    </button>
+                    {open && <div className="develop-group-body">
+                      {group.controls.map((control) => {
+                        const active = control.key in settings
+                        const allowed = allowedKeys[control.key] ?? !control.experimental
+                        const rejected = probeResult?.unsupported.includes(control.key) ?? false
+                        return (
+                          <div className={`develop-row ${active ? 'is-active' : ''} ${rejected ? 'is-rejected' : ''} ${allowed ? '' : 'is-disallowed'}`} key={control.key}>
+                            <label className="develop-row-toggle" title={`${allowed ? '已允许' : '未允许'}大模型调整 · ${control.key} → LrC ${control.controller}${control.description ? ` · ${control.description}` : ''}`}>
+                              <input type="checkbox" checked={allowed} disabled={rejected} onChange={() => toggleAllowed(control)} />
+                              <span className="develop-row-label">
+                                {control.label}
+                                {control.experimental && <em className="develop-tag">实验</em>}
+                                {rejected && <em className="develop-tag is-warning">宿主不支持</em>}
+                              </span>
+                            </label>
+                            {active
+                              ? renderValueEditor(control, settings[control.key])
+                              : <span className="develop-row-idle">{control.kind === 'number' ? `${control.default}` : control.kind === 'bool' ? (control.default ? '开' : '关') : ''}</span>}
+                            <span className="develop-row-key">{control.key}</span>
+                            <button
+                              className={`develop-row-action ${active ? 'is-remove' : ''}`}
+                              onClick={() => { if (active) removeSetting(control.key); else addSetting(control) }}
+                              title={active ? '从本次渲染中移除该参数' : '以当前值加入本次渲染'}
+                              aria-label={active ? `移除 ${control.label}` : `加入 ${control.label}`}
+                            >
+                              {active ? <X size={11} /> : <Plus size={11} />}
+                            </button>
+                          </div>
+                        )
+                      })}
+                    </div>}
+                  </div>
+                )
+              })}
+            </section>
           </section>
         </div>
 
@@ -531,6 +831,10 @@ export default function App() {
           <span className="lrc-state"><Check size={13} />{lightroomStatus.connected ? `LrC 已连接 · ${lightroomStatus.selected_filename || '未选中照片'}` : '等待 Lightroom Classic 插件连接'}</span>
         </footer>
       </section>
+
+      <footer className="app-footer">
+        <span>Copyright 2026 <a href="">qincnd</a> All Rights Reserved</span>
+      </footer>
 
       {showModelSettings && <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowModelSettings(false) }}>
         <section className="model-dialog" role="dialog" aria-modal="true" aria-labelledby="model-dialog-title">

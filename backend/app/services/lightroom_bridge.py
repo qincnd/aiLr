@@ -7,7 +7,7 @@ import uuid
 from collections import deque
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -17,18 +17,24 @@ from app.settings import validate_develop_settings
 HEARTBEAT_TTL_SECONDS = 15
 MAX_PENDING_JOBS = 20
 MAX_RESULT_BYTES = 300 * 1024 * 1024
+MAX_REPORT_CHARS = 4000
 SUPPORTED_EXPORT_FORMATS = {"JPEG", "PNG", "TIFF"}
 
 
 class LightroomJobRequest(BaseModel):
-    action: Literal["preview", "export"]
-    settings: dict[str, float]
+    action: Literal["preview", "export", "probe"]
+    settings: dict[str, Any] = Field(default_factory=dict)
     format: Literal["JPEG", "PNG", "TIFF"] = "JPEG"
     quality: int = Field(default=90, ge=1, le=100)
     max_dimension: int = Field(default=2560, ge=256, le=12000)
 
     @model_validator(mode="after")
     def validate_settings(self) -> LightroomJobRequest:
+        # A probe job only asks Lightroom which develop parameters it accepts, so
+        # it is allowed to carry no settings at all.
+        if self.action == "probe":
+            self.settings = {}
+            return self
         self.settings = validate_develop_settings(self.settings)
         return self
 
@@ -42,6 +48,7 @@ class LightroomJob:
     content_type: str = ""
     image: bytes | None = None
     error: str = ""
+    report: str = ""
     created_at: float = 0.0
 
 
@@ -71,7 +78,8 @@ class LightroomBridge:
         async with self._lock:
             if not self.status()["connected"]:
                 raise RuntimeError("Lightroom 插件未连接；请先在 LrC 中启动 aiLr Bridge")
-            if not self._selected_filename:
+            # Probing only reads develop values, so it works without a selected photo.
+            if request.action != "probe" and not self._selected_filename:
                 raise RuntimeError("请先在 Lightroom Classic 中选中一张照片")
             if len(self._queue) >= MAX_PENDING_JOBS:
                 raise RuntimeError("Lightroom 渲染队列已满，请稍后重试")
@@ -135,6 +143,15 @@ class LightroomBridge:
                 return None
             job.error = error.strip()[:1000] or "Lightroom 渲染失败"
             job.status = "failed"
+            return job
+
+    async def record_report(self, job_id: str, report: str) -> LightroomJob | None:
+        """Store a plug-in report: accepted/rejected develop keys or a probe result."""
+        async with self._lock:
+            job = self._jobs.get(job_id)
+            if not job or job.status != "processing":
+                return None
+            job.report = report.strip()[:MAX_REPORT_CHARS]
             return job
 
     async def clear(self) -> None:

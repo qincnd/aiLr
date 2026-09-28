@@ -101,10 +101,65 @@ class RawImageProcessingTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         generate.assert_awaited_once()
-        model_image = generate.await_args.args[1]
-        model_mime_type = generate.await_args.args[2]
+        call = generate.await_args
+        assert call is not None
+        model_image = call.args[1]
+        model_mime_type = call.args[2]
         self.assertEqual(model_mime_type, "image/jpeg")
         self.assertEqual(Image.open(BytesIO(model_image)).format, "JPEG")
+
+    def test_suggestions_forward_the_allowed_key_set(self) -> None:
+        client = TestClient(app)
+        suggestion = {"summary": "Trimmed", "settings": {"Exposure2012": 0.2}}
+        with (
+            patch("app.main.runtime.active", True),
+            patch("app.main.generate_suggestion", new_callable=AsyncMock, return_value=suggestion) as generate,
+        ):
+            response = client.post(
+                "/api/suggestions",
+                data={"prompt": "natural", "allowed_keys": '["Vibrance","Exposure2012"]'},
+                files={"photo": ("photo.jpg", b"image", "image/jpeg")},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        # Registry order wins and the key set travels as the fourth argument.
+        call = generate.await_args
+        assert call is not None
+        self.assertEqual(call.args[3], ("Exposure2012", "Vibrance"))
+
+    def test_suggestions_reject_a_key_set_the_registry_cannot_use(self) -> None:
+        client = TestClient(app)
+        with (
+            patch("app.main.runtime.active", True),
+            patch("app.main.generate_suggestion", new_callable=AsyncMock) as generate,
+        ):
+            response = client.post(
+                "/api/suggestions",
+                data={"prompt": "natural", "allowed_keys": '["MadeUpControl"]'},
+                files={"photo": ("photo.jpg", b"image", "image/jpeg")},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("至少允许一个", response.json()["detail"])
+        generate.assert_not_awaited()
+
+    def test_suggestions_accept_a_comma_separated_key_set(self) -> None:
+        client = TestClient(app)
+        suggestion = {"summary": "Trimmed", "settings": {"Exposure2012": 0.2}}
+        with (
+            patch("app.main.runtime.active", True),
+            patch("app.main.generate_suggestion", new_callable=AsyncMock, return_value=suggestion) as generate,
+        ):
+            response = client.post(
+                "/api/suggestions",
+                data={"prompt": "natural", "allowed_keys": "Exposure2012, Vibrance"},
+                files={"photo": ("photo.jpg", b"image", "image/jpeg")},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        call = generate.await_args
+        assert call is not None
+        self.assertEqual(call.args[3], ("Exposure2012", "Vibrance"))
 
 
 if __name__ == "__main__":

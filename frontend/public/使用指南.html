@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#151813" />
+    <title>aiLr 使用指南</title>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=EB+Garamond:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600;700&display=swap');
+      :root { color-scheme: dark; --surface: #211c18; --surface-2: #2a231d; --line: #40382f; --text: #ded4c7; --muted: #9c9286; --lime: #c4a882; --rose: #d9b9b0; --code: #141110; }
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
+      body { margin: 0; min-height: 100vh; font-family: 'Noto Sans SC', system-ui, sans-serif; font-size: 14px; line-height: 1.75; color: var(--text); background: radial-gradient(ellipse at 50% -20%, #393029 0, #211c18 42%, #1c1917 78%); }
+      a { color: var(--lime); text-decoration: none; }
+      a:hover { color: #e1c9a5; text-decoration: underline; }
+      .topbar { position: sticky; top: 0; z-index: 5; height: 66px; padding: 0 5.4vw; display: flex; align-items: center; justify-content: space-between; gap: 18px; border-bottom: 1px solid #40382f; background: rgba(28, 25, 23, .9); backdrop-filter: blur(6px); }
+      .brand { display: flex; align-items: center; gap: 10px; color: #f0f1e9; font-weight: 700; font-size: 17px; }
+      .brand:hover { text-decoration: none; }
+      .brand-mark { width: 30px; height: 30px; display: grid; place-items: center; color: var(--lime); border: 1px solid #806b50; border-radius: 50%; }
+      .brand-accent { color: var(--lime); }
+      .topbar-tag { color: var(--muted); font: 500 10px 'DM Mono', monospace; letter-spacing: 1px; }
+      .topbar-actions { display: flex; align-items: center; gap: 10px; }
+      .ghost-button { display: inline-flex; align-items: center; gap: 7px; min-height: 32px; padding: 0 12px; border: 1px solid #5a4c3e; border-radius: 3px; color: #ded0bf; font-size: 11px; }
+      .ghost-button:hover { border-color: var(--lime); color: #e1c9a5; text-decoration: none; }
+      .hero { width: min(1180px, calc(100% - 64px)); margin: 0 auto; padding: 46px 0 6px; }
+      .kicker { display: flex; align-items: center; gap: 9px; color: #adb49b; font: 500 10px 'DM Mono', monospace; }
+      .kicker i { width: 20px; height: 1px; background: var(--lime); }
+      h1 { margin: 12px 0 0; font-family: 'EB Garamond', 'Noto Serif SC', serif; font-weight: 500; font-size: clamp(26px, 3.4vw, 38px); line-height: 1.3; }
+      h1 em { color: var(--lime); font-style: normal; }
+      .hero p { max-width: 76ch; color: #c3baad; }
+      .hero-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+      .chip { padding: 5px 11px; border: 1px solid #4a4038; border-radius: 999px; color: #c4b9aa; font-size: 11px; }
+      .layout { width: min(1180px, calc(100% - 64px)); margin: 0 auto; padding: 20px 0 60px; display: grid; grid-template-columns: 214px minmax(0, 1fr); gap: 34px; align-items: start; }
+      .toc { position: sticky; top: 88px; padding: 16px 0; border-top: 1px solid var(--line); font-size: 12.5px; }
+      .toc strong { display: block; margin-bottom: 10px; color: var(--muted); font: 500 10px 'DM Mono', monospace; letter-spacing: 1px; }
+      .toc a { display: block; padding: 5px 0; color: #bdb2a4; }
+      .toc a:hover { color: var(--lime); text-decoration: none; }
+      .content { min-width: 0; }
+      section.card { margin: 0 0 20px; padding: 24px 26px 22px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); }
+      section.card > h2 { display: flex; align-items: baseline; gap: 10px; margin: 0 0 4px; font-family: 'EB Garamond', 'Noto Serif SC', serif; font-weight: 500; font-size: 23px; }
+      .step-no { color: #939a87; font: 11px 'DM Mono', monospace; }
+      h3 { margin: 22px 0 4px; font-size: 14px; font-weight: 600; color: #e6ded1; }
+      p { margin: 8px 0; }
+      ul, ol { margin: 8px 0; padding-left: 21px; }
+      li { margin: 5px 0; }
+      code { padding: 1px 5px; border: 1px solid #3d342c; border-radius: 3px; background: var(--code); color: #e2cdae; font: 12px 'DM Mono', monospace; }
+      pre { overflow-x: auto; margin: 12px 0; padding: 13px 15px; border: 1px solid #3d342c; border-radius: 4px; background: var(--code); }
+      pre code { padding: 0; border: 0; background: none; font-size: 12.5px; line-height: 1.72; }
+      table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 12.5px; }
+      th, td { padding: 8px 10px; border-bottom: 1px solid #362f28; text-align: left; vertical-align: top; }
+      th { color: #d8c2a1; font: 500 11px 'DM Mono', monospace; }
+      tbody tr:hover { background: #261f19; }
+      .note { margin: 14px 0; padding: 12px 14px; border-left: 3px solid var(--lime); background: #26201a; color: #d5cabb; font-size: 12.5px; }
+      .note.warn { border-left-color: var(--rose); }
+      ol.steps { counter-reset: step; list-style: none; padding-left: 0; }
+      ol.steps > li { position: relative; padding-left: 34px; margin: 12px 0; }
+      ol.steps > li::before { counter-increment: step; content: counter(step, decimal-leading-zero); position: absolute; left: 0; top: 1px; color: var(--lime); font: 11px 'DM Mono', monospace; }
+      details { margin: 10px 0; border: 1px solid var(--line); border-radius: 4px; background: #241f1a; }
+      details > summary { padding: 11px 14px; cursor: pointer; color: #e0d6c8; font-size: 13px; }
+      details[open] > summary { border-bottom: 1px solid var(--line); }
+      details .detail-body { padding: 4px 16px 14px; color: #cabfb0; font-size: 12.5px; }
+      .footer { width: min(1180px, calc(100% - 64px)); margin: 0 auto; padding: 22px 0 46px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11.5px; }
+      @media (max-width: 900px) {
+        .topbar { padding: 0 18px; }
+        .topbar-tag { display: none; }
+        .hero, .layout, .footer { width: calc(100% - 36px); }
+        .layout { grid-template-columns: 1fr; gap: 16px; }
+        .toc { position: static; }
+      }
+      @media (max-width: 540px) {
+        section.card { padding: 18px 16px; }
+        h1 { font-size: 25px; }
+      }
+      @media print {
+        .topbar, .toc { display: none; }
+        body { background: #fff; color: #222; }
+        section.card { border-color: #ddd; background: #fff; }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/"><span class="brand-mark">◉</span><span>ai<span class="brand-accent">Lr</span></span></a>
+      <span class="topbar-tag">USAGE GUIDE</span>
+      <div class="topbar-actions"><a class="ghost-button" href="/">返回工作台</a></div>
+    </header>
+
+    <div class="hero">
+      <div class="kicker"><i></i>AI COLOR STUDIO · 使用指南</div>
+      <h1>从上传一张照片，<em>到 Lightroom 真正渲染。</em></h1>
+      <p>这份指南覆盖完整链路：装环境 → 启动服务 → 选择模型 → 网页生成调色方案 → 由 Lightroom Classic 插件写入 Develop 参数并渲染预览或导出。遇到报错请直接看第 09 节，那里按「现象 → 原因 → 处理」列出了已知问题。</p>
+      <div class="hero-meta">
+        <span class="chip">Windows 10/11</span>
+        <span class="chip">Python 3.11+ · Node 20+</span>
+        <span class="chip">后端 8000 · 前端 5173</span>
+        <span class="chip">LrC 插件 Bridge 2026.09.28.1 · 107 项 Develop 参数</span>
+      </div>
+    </div>
+
+    <div class="layout">
+      <nav class="toc" aria-label="目录">
+        <strong>目录</strong>
+        <a href="#about">01 能做什么</a>
+        <a href="#quickstart">02 三步上手</a>
+        <a href="#prepare">03 环境准备</a>
+        <a href="#launch">04 安装与启动</a>
+        <a href="#model">05 模型设置</a>
+        <a href="#workflow">06 网页调色流程</a>
+        <a href="#lightroom">07 与 LrC 联动</a>
+        <a href="#parameters">08 参数范围</a>
+        <a href="#troubleshooting">09 常见问题排查</a>
+        <a href="#reference">10 端口 / 文件速查</a>
+        <a href="#notice">11 数据与声明</a>
+      </nav>
+
+      <main class="content">
+        <section class="card" id="about">
+          <h2><span class="step-no">01</span>能做什么 / 不能做什么</h2>
+          <p>aiLr 是一套「网页 + Python 后端 + Lightroom Classic 插件」的本地调色工作台，链路是：</p>
+          <pre><code>网页上传照片/RAW → 视觉模型读图并给出受约束的 Develop 参数
+      → 网页可逐项微调 → LrC 插件把参数写入当前选中照片
+      → LrC 真正渲染 → 回传网页预览，或按选项导出下载</code></pre>
+          <h3>能做到</h3>
+          <ul>
+            <li>支持常见 RAW（DNG、CR2/CR3、NEF/NRW、ARW、RAF、ORF、RW2、PEF 等），解码后只用预览做分析，原片不改写。</li>
+            <li>网页「全部 LrC 调色参数」面板把 107 项 Develop 参数按 LrC 面板分组列出：左侧开关表示「是否允许大模型调整该参数」，默认除 19 项实验参数外全部打开；行末的 <code>＋</code> 可把该参数以当前值手工加入本次渲染，不必依赖 AI 建议，拖动滑块或下拉选择即可微调。</li>
+            <li>「应用到 LrC 并预览」拿到 <strong>Lightroom 真实渲染结果</strong>（2560px JPEG），而不是网页伪造效果。</li>
+            <li>「LrC 渲染并下载」按 JPEG / PNG / TIFF、JPEG 质量与最长边导出成品；「导出调色参数 .JSON」保存参数快照。</li>
+            <li>本地 Ollama 或任意 OpenAI-compatible 视觉模型二选一，密钥只留本机。</li>
+          </ul>
+          <h3>做不到 / 需要注意</h3>
+          <ul>
+            <li>插件通过 <code>LrDevelopController</code> 接入的是 Develop 面板的滑块/开关/枚举类参数（含 HSL 混色器、颜色分级、分离色调、点曲线、细节、暗角与颗粒），<strong>蒙版、局部调整、瑕疵修复、裁剪与镜头配置文件本身仍无法通过接口写入</strong>，这些请照旧在 LrC / PS / Lr 里做。</li>
+            <li>镜头校正与变换两组共 19 项与 LrC 版本、镜头配置文件相关，标记为「实验」；被当前宿主拒绝时只会跳过该项并在网页给出黄色提示，不会让渲染失败。</li>
+            <li>网页不模拟 Lightroom 的像素效果，也没有「实时预览调色结果」；要看效果必须由 LrC 渲染回传（即 preview 流程）。</li>
+            <li>预览与导出都会<strong>改写当前照片的 Develop 设置</strong>并产生可撤销的历史记录，建议用副本 / 虚拟副本做试验。</li>
+            <li>一键脚本不会自动安装 Ollama，也不会替你执行 <code>ollama serve</code>；也不会替你安装 LrC 插件。</li>
+          </ul>
+        </section>
+
+        <section class="card" id="quickstart">
+          <h2><span class="step-no">02</span>三步上手</h2>
+          <ol class="steps">
+            <li><strong>初始化（只需一次）</strong>：在项目根目录双击 <code>init.bat</code>（等价于 <code>scripts\init.ps1</code>）。它会创建 <code>.venv</code>、安装后端与前端依赖、由 <code>.env.example</code> 生成 <code>.env</code>，并检查 Ollama 与默认模型。</li>
+            <li><strong>启动服务</strong>：双击 <code>start.bat</code>。后端与前端各自开一个窗口，健康检查通过后自动打开浏览器 <code>http://127.0.0.1:5173</code>。</li>
+            <li><strong>开模型 → 出方案 → 交 LrC</strong>：右上角「模型设置」里点「保存并启动」；上传照片、写下调色意图、点「生成调色方案」；确认 LrC 中选中同名照片后点「应用到 LrC 并预览」。</li>
+          </ol>
+          <div class="note">第一次联动 LrC 需要先装插件并启动桥接，见第 07 节。停下服务只需关闭标题为 <code>aiLr backend</code> / <code>aiLr frontend</code> 的窗口，或在窗口里按 Ctrl+C。</div>
+        </section>
+
+        <section class="card" id="prepare">
+          <h2><span class="step-no">03</span>环境准备</h2>
+          <table>
+            <thead><tr><th>组件</th><th>用途</th><th>要求</th></tr></thead>
+            <tbody>
+              <tr><td>Windows</td><td>运行后端 / 脚本 / Lightroom Classic</td><td>Windows 10 / 11</td></tr>
+              <tr><td>Python</td><td>FastAPI 后端、RAW 解码、模型调用</td><td>3.11 或更高（脚本优先用 <code>py -3</code>）</td></tr>
+              <tr><td>Node.js + npm</td><td>Vite / React 前端</td><td>Node 20 或更高</td></tr>
+              <tr><td>Ollama</td><td>本地视觉模型推理</td><td>已安装并运行；默认模型 <code>qwen2.5vl:7b</code>，地址 <code>http://127.0.0.1:11434</code></td></tr>
+              <tr><td>云端模型（可选）</td><td>替代本地推理</td><td>OpenAI-compatible、支持图像输入与 JSON 输出</td></tr>
+              <tr><td>LibRaw（随 rawpy 安装）</td><td>RAW 解码</td><td>实际机型支持取决于 LibRaw 版本</td></tr>
+              <tr><td>Lightroom Classic</td><td>应用参数与真实渲染</td><td>需要能加载 <code>.lrplugin</code> 的正式版本</td></tr>
+            </tbody>
+          </table>
+          <div class="note">不需要另外下载 Adobe Lightroom SDK——插件就是仓库里的 <code>aiLr.lrplugin</code>，直接添加给 LrC 即可。</div>
+        </section>
+
+        <section class="card" id="launch">
+          <h2><span class="step-no">04</span>安装与启动</h2>
+          <h3>一键脚本（推荐）</h3>
+          <table>
+            <thead><tr><th>入口</th><th>作用</th></tr></thead>
+            <tbody>
+              <tr><td><code>scripts\init.ps1</code> / 双击 <code>init.bat</code></td><td>创建 <code>.venv</code>、安装后端与前端依赖、生成 <code>.env</code>、检查 Ollama 与默认模型</td></tr>
+              <tr><td><code>scripts\start.ps1</code> / 双击 <code>start.bat</code></td><td>分别开窗口启动 FastAPI 与 Vite，健康检查通过后打开浏览器</td></tr>
+            </tbody>
+          </table>
+          <table>
+            <thead><tr><th>参数</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td><code>init.ps1 -Force</code></td><td>重建 <code>.venv</code>、重置 <code>.env</code></td></tr>
+              <tr><td><code>init.ps1 -RunTests</code></td><td>初始化完成后顺带跑后端单元测试</td></tr>
+              <tr><td><code>init.ps1 -SkipModelPull</code></td><td>不下载模型权重</td></tr>
+              <tr><td><code>start.ps1 -BackendOnly</code> / <code>-FrontendOnly</code></td><td>只启动其中一端</td></tr>
+              <tr><td><code>start.ps1 -Foreground</code></td><td>后端日志留在当前窗口，方便看启动报错</td></tr>
+              <tr><td><code>start.ps1 -DryRun</code></td><td>只检查环境并打印将执行的命令，不启动进程</td></tr>
+              <tr><td><code>start.ps1 -NoBrowser</code> / <code>-NoReload</code></td><td>不自动打开浏览器 / 不以 <code>--reload</code> 启动后端</td></tr>
+            </tbody>
+          </table>
+          <p>脚本是幂等设计，重复运行不会破坏已有 <code>.venv</code>、<code>.env</code> 和 <code>node_modules</code>；端口 8000 / 5173 已被本机 aiLr 服务占用时直接复用，被其它程序占用时会明确报错。</p>
+          <h3>手工命令（等价做法）</h3>
+          <pre><code># 初始化
+py -3 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+Copy-Item .env.example .env
+npm --prefix frontend install
+
+# 启动（两个窗口）
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir backend --reload
+npm --prefix frontend run dev</code></pre>
+          <p>网页入口 <code>http://127.0.0.1:5173</code>，后端健康检查 <code>http://127.0.0.1:8000/api/health</code>。若 PowerShell 不让激活虚拟环境，可直接用 <code>.\.venv\Scripts\python.exe -m ...</code>。</p>
+          <h3>本地模型权重</h3>
+          <pre><code>ollama pull qwen2.5vl:7b</code></pre>
+          <p>默认模型 <code>qwen2.5vl:7b</code>，推理上下文 8192 tokens（比 Ollama 常见的 4096 更吃内存）。启动 aiLr 不会自动加载模型，只有模型设置里的「保存并启动」才会加载。</p>
+        </section>
+
+        <section class="card" id="model">
+          <h2><span class="step-no">05</span>模型设置</h2>
+          <p>点击右上角「模型设置」，二选一：</p>
+          <ul>
+            <li><strong>本地模型（Ollama）</strong>：打开时会读取 <code>/api/tags</code> 列出已下载模型（只读清单，不加载模型），下拉选择即可；改过地址请先「保存配置」再「重新检测」。</li>
+            <li><strong>云端模型</strong>：填写模型 ID、API Base URL、API Key；任何兼容 Chat Completions + 图像输入 + JSON 输出的服务都可以。</li>
+          </ul>
+          <p>两个按钮的区别很关键：</p>
+          <ul>
+            <li>「保存配置」只写配置，<strong>不启动模型</strong>。</li>
+            <li>「保存并启动」才会加载本地模型或校验云端连通性；运行中可点「停止」卸载本地模型。</li>
+            <li>切换 provider / 模型后必须重新「保存并启动」，否则生成建议会被拒绝。</li>
+          </ul>
+          <div class="note warn">配置以 JSON 保存在 <code>backend/data/model_config.json</code>，其中的 API Key 是本机明文（该文件已加入 <code>.gitignore</code>，不要提交或同步到公开位置）。选择云端 provider 时，照片会被发送到你所配置的云端服务。</div>
+        </section>
+
+        <section class="card" id="workflow">
+          <h2><span class="step-no">06</span>网页调色流程</h2>
+          <ol class="steps">
+            <li><strong>选照片</strong>：把照片拖进画布或点选文件。普通图片上限 12 MB，RAW 上限 100 MB（可用 <code>.env</code> 里的 <code>AILR_MAX_IMAGE_MB</code> / <code>AILR_MAX_RAW_IMAGE_MB</code> 调整）。RAW 由后端按相机白平衡解码，并生成最长边 ≤ 2048px 的 JPEG 供网页显示和模型分析，<strong>原片不会被改写</strong>。</li>
+            <li><strong>写调色意图</strong>：例如「自然通透，保留天空层次，绿色不要过饱和」。可以写具体描述，也可以留空让模型自行判断。</li>
+            <li><strong>生成调色方案</strong>：网页会把「允许大模型调整的参数集合」一起发给后端，模型以资深调色师的工作流作答（先读图诊断 → 先修影调与白平衡 → 再塑形与配色 → 最后细节与效果，且本插件只有全局滑块，不会承诺蒙版或局部调整），并按「基础滑块 + 按 LrC 面板分组的触发条件」返回一段中文说明 + Develop 参数（按需要 3–12 项，允许集合较小时该区间会自动收窄；默认允许集合为除实验参数外的全部 88 项，涵盖数值、枚举、开关与点曲线）。模型若给出未允许的参数名或超范围数值，后端会按 <code>backend/app/settings.py</code> 丢弃或拒绝。</li>
+            <li><strong>检查并微调</strong>：右侧列出本次要写入 LrC 的全部参数，数值为滑块、枚举为下拉、开关为勾选框、点曲线为 <code>x,y;x,y</code> 文本框；每个参数右侧的 <code>×</code> 可把它从本次渲染中移除。步进由参数决定（曝光 0.05、色温 50、锐化半径 0.1，其余为 1）。往下是「全部 LrC 调色参数」面板，按 LrC 面板分区列出全部 107 项：<strong>左侧开关 = 是否允许大模型调整该参数</strong>（默认除实验参数外全部允许），关掉某个开关时该参数也会退出本次渲染；<strong>行末 <code>＋</code> = 以当前值把参数加入本次渲染</strong>，加入后可直接拖动或下拉改值，再按 <code>×</code> 移除。</li>
+            <li><strong>应用到 LrC 并预览</strong>：插件切到 Develop 模块、写入参数，再用 LrExportSession 渲染 2560px JPEG 回传网页；预览区会多出「原图 / LrC 渲染」切换。</li>
+            <li><strong>LrC 渲染并下载</strong>：选择 JPEG / PNG / TIFF，JPEG 可调质量（50–100，默认 92），最长边可设 256–12000 px（默认 6000），成品由浏览器直接下载。</li>
+            <li><strong>导出调色参数 .JSON</strong>：把当前参数与说明存成 <code>*-develop.json</code>，便于留档或手工复现。</li>
+          </ol>
+          <div class="note">第 5、6 步都要求插件已连接且 LrC 选中与网页同名的照片，否则按钮不可用或直接提示失败。</div>
+        </section>
+
+        <section class="card" id="lightroom">
+          <h2><span class="step-no">07</span>与 Lightroom Classic 联动</h2>
+          <h3>首次接入（只做一次）</h3>
+          <ol class="steps">
+            <li>启动 LrC，打开「文件 &gt; 增效工具管理器」，点「添加」。</li>
+            <li>选中项目根目录下的 <code>aiLr.lrplugin</code> <strong>文件夹本身</strong>（不要进入文件夹选里面的文件，也不要选项目根目录）。列表里应出现 <em>aiLr Lightroom Bridge</em>，状态为已启用。</li>
+            <li>切到「图库」模块，在菜单栏最右侧点击 <code>aiLr: Start/Stop Web Bridge</code> 启动轮询。启动弹窗会显示版本号与参数数量，例如 <code>Bridge started (2026.09.28.1) with 107 develop parameters. ...</code>。</li>
+            <li>（建议）回网页在「全部 LrC 调色参数」面板点一次「检测 LrC 支持」，让插件用只读方式自检当前 LrC 版本接受哪些参数；不支持的会被置灰。该操作不会修改照片。</li>
+            <li>回网页，确认右下角 / 底部显示 LrC 已连接且文件名与你上传的照片一致。</li>
+          </ol>
+          <div class="note warn">插件目录名必须以小写 <code>.lrplugin</code> 结尾。仓库里只保留一份 <code>aiLr.lrplugin</code>，不要再复制改名（历史故障：副本被命名为 <code>lrc-plugin.Irplugin</code>，大写 <code>I</code>，LrC 直接拒绝添加，而且副本里的清单会和主目录不同步）。</div>
+          <h3>改过插件代码之后</h3>
+          <p><code>Bridge.lua</code> 等文件被修改后，必须回到「文件 &gt; 增效工具管理器」选中该插件点<strong>重新加载</strong>，或者完全重启 LrC；否则 LrC 执行的一直是内存里的旧代码。判断方法见第 09 节的版本号排查。</p>
+          <h3>运行规则</h3>
+          <table>
+            <thead><tr><th>项目</th><th>行为</th></tr></thead>
+            <tbody>
+              <tr><td>照片匹配</td><td>网页与 LrC 必须选中<strong>同名</strong>照片，否则网页拒绝创建任务（HTTP 409）。</td></tr>
+              <tr><td>预览</td><td>固定 2560px JPEG，回传网页显示，不落盘到你的下载目录。</td></tr>
+              <tr><td>导出</td><td>JPEG / PNG / TIFF；JPEG 质量 50–100（默认 92）；最长边 256–12000 px（默认 6000）。</td></tr>
+              <tr><td>照片状态</td><td>参数写入当前照片的 Develop 并生成可撤销历史记录；试验请用副本或虚拟副本。</td></tr>
+              <tr><td>心跳</td><td>插件每约 1.5 秒上报一次；15 秒无心跳即判定离线，网页会显示「插件未连接」。</td></tr>
+              <tr><td>停止桥接</td><td>再次点击 <code>aiLr: Start/Stop Web Bridge</code>，或关闭 LrC。关闭插件窗口不会自动停止，需用菜单项切换。</td></tr>
+              <tr><td>通信</td><td>插件只访问本机 <code>127.0.0.1:8000</code>：<code>/heartbeat</code>、<code>/jobs/next</code>、<code>/jobs/{id}/result</code>、<code>/jobs/{id}/report</code>（部分参数被拒 / 参数自检结果）、<code>/jobs/{id}/failed</code>。不要把 FastAPI 绑定到公网。</td></tr>
+              <tr><td>参数被拒</td><td>每个参数单独写入：被当前 LrC 版本或照片 process version 拒绝的项会被跳过，其余照常应用；网页在 Lightroom Classic 区块显示黄色提示，渲染结果仍正常返回。全部被拒才算失败。</td></tr>
+            </tbody>
+          </table>
+          <div class="note">渲染失败的完整原因会由插件回传到网页，红条里以 <code>aiLr Bridge 版本号: 原始报错</code> 的形式显示，排查时先看这个前缀。</div>
+        </section>
+
+        <section class="card" id="parameters">
+          <h2><span class="step-no">08</span>参数范围</h2>
+          <p>插件可写入 <strong>107 项</strong> LrC Develop 参数，按 LrC 面板分组如下；模型输出、网页滑块与插件写入受同一套定义约束（唯一真值源是 <code>backend/app/settings.py</code>，同时驱动网页、MCP 工具与 <code>Bridge.lua</code> 的参数表）。</p>
+          <table>
+            <thead><tr><th>LrC 面板</th><th>项数</th><th>包含内容举例</th></tr></thead>
+            <tbody>
+              <tr><td>基本</td><td>12</td><td>曝光、对比度、高光、阴影、白色色阶、黑色色阶、纹理、清晰度、去朦胧、自然饱和度、饱和度、转换为黑白</td></tr>
+              <tr><td>白平衡</td><td>3</td><td>色温（2000–50000 K）、色调（-150 ~ 150）、白平衡预设（原照设置 / 自动 / 日光 / 阴天 / 阴影 / 白炽灯 / 荧光灯 / 闪光灯）</td></tr>
+              <tr><td>色调曲线</td><td>12</td><td>曲线预设；点曲线 RGB 与红 / 绿 / 蓝通道；参数曲线阴影 / 暗色调 / 亮色调 / 高光，以及 3 个分离点</td></tr>
+              <tr><td>混色器 HSL</td><td>24</td><td>红 / 橙 / 黄 / 绿 / 浅绿 / 蓝 / 紫 / 洋红 × 色相 / 饱和度 / 明亮度（-100 ~ 100）</td></tr>
+              <tr><td>颜色分级</td><td>13</td><td>阴影 / 中间调 / 高光 / 全局的色相 0–360、饱和度 0–100、明亮度 -100 ~ 100，以及混合</td></tr>
+              <tr><td>分离色调</td><td>5</td><td>阴影色相 / 饱和度、高光色相 / 饱和度、平衡</td></tr>
+              <tr><td>细节</td><td>10</td><td>锐化数量 / 半径 / 细节 / 蒙版；减少杂色的明亮度、明亮度细节 / 对比、颜色、颜色细节 / 平滑度</td></tr>
+              <tr><td>效果</td><td>8</td><td>裁剪后暗角数量 / 中点 / 羽化 / 圆度 / 样式、颗粒数量 / 大小 / 粗糙度</td></tr>
+              <tr><td>镜头校正（实验）</td><td>11</td><td>删除色差、启用配置文件校正、扭曲度、去边红 / 蓝、紫边与绿边去边 6 项</td></tr>
+              <tr><td>变换（实验）</td><td>8</td><td>Upright 模式、垂直、水平、旋转、缩放、X / Y 位移、长宽比</td></tr>
+              <tr><td>其它</td><td>1</td><td>自动调整色调</td></tr>
+            </tbody>
+          </table>
+          <p>参数值分四类：<strong>数值</strong>（滑块，步进由参数决定：曝光 0.05、色温 50、锐化半径 0.1，多数为 1）、<strong>枚举</strong>（白平衡预设、曲线预设、暗角样式、Upright 模式，下拉选择）、<strong>开关</strong>（转换为黑白、删除色差、启用配置文件校正、自动调整色调）、<strong>点曲线</strong>（文本框，写法 <code>0,0;64,52;128,132;255,255</code>，2–16 个控制点且 x 必须递增）。默认允许大模型调整的集合包含这四类，模型也可能直接给出枚举名、开关值或点曲线（点曲线以 <code>x,y</code> 字符串返回，后端会还原成控制点表）。</p>
+          <p><strong>蒙版与局部调整</strong>（渐变、径向、画笔、主体 / 天空选择）、瑕疵修复、裁剪与旋转、镜头配置文件本身、直方图与色阶不在 LrC 插件接口范围内，仍请在 LrC 里完成。</p>
+          <div class="note">「实验」两组共 19 项与 LrC 版本、镜头配置文件相关，<strong>默认不允许大模型调整</strong>（不会进入该次请求的参数字段）；需要时可在面板里手动打开它们的开关为该次请求解锁，或用行末的 <code>＋</code> 直接加入本次渲染；被宿主拒绝时只跳过该项。点「检测 LrC 支持」可让插件用只读的 <code>LrDevelopController.getValue</code> 逐项自检，不支持的参数会被置灰——该操作不会修改照片。</div>
+          <p>色温属于「白平衡」类参数：LrC 中照片若处于「原照设置 / 自动」白平衡，写入数值会切换到自定义色温，肉眼变化可能较明显，建议在虚拟副本上试。</p>
+        </section>
+
+        <section class="card" id="troubleshooting">
+          <h2><span class="step-no">09</span>常见问题排查</h2>
+          <p>点击展开每一条，按「现象 → 原因 → 处理」执行。</p>
+
+          <details open>
+            <summary>网页一直显示「插件未连接 / 等待 Lightroom Classic 插件连接」</summary>
+            <div class="detail-body">
+              <p><strong>原因：</strong>插件没启动、被 LrC 卸载、或超过 15 秒没有心跳；也可能是后端没跑。</p>
+              <p><strong>处理：</strong>①确认 <code>http://127.0.0.1:8000/api/health</code> 能打开；②LrC「图库」模块点一次 <code>aiLr: Start/Stop Web Bridge</code>（若上次是运行中退出的，第一次点击可能是停止，再点一次启动）；③确认插件在「增效工具管理器」里已启用；④确认 LrC 有选中照片，空选也会导致文件名上报为空。</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>点「应用到 LrC 并预览」提示 LrC 选中的是别的照片</summary>
+            <div class="detail-body">
+              <p><strong>原因：</strong>网页上传的照片文件名与 LrC 当前选中照片不一致，后端返回 409 并拒绝创建任务。</p>
+              <p><strong>处理：</strong>在 LrC 里选中与网页同名的文件（扩展名不用一致，比较的是完整文件名）；改名过的副本请重新选择，或改用未改名的原文件。</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>红条报 Yielding is not allowed within a C or metamethod call</summary>
+            <div class="detail-body">
+              <p><strong>原因：</strong>旧版插件把会 yield 的函数（<code>LrHttp.get/post</code>、<code>LrTasks.sleep</code>、<code>LrApplicationView.switchToModule</code>、<code>LrExportSession:renditions()</code> 迭代）放进了标准 Lua 的 <code>pcall</code>；它是 C 调用边界，内部禁止 yield。</p>
+              <p><strong>处理：</strong>当前 <code>Bridge.lua</code> 已改用 <code>protected_call</code>（优先 <code>LrTasks.pcall</code>，无该 API 时用协程转发 yield）。出现这条报错说明跑的是旧代码，请重新加载插件或重启 LrC。自己写插件代码时不要用裸 <code>pcall</code>/<code>xpcall</code> 包裹会 yield 的函数。</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>红条报 attempt to call field 'remove' (a nil value)</summary>
+            <div class="detail-body">
+              <p><strong>原因：</strong>Lightroom 的 Lua 沙箱删掉了标准库里所有会改动文件系统的函数，插件里 <code>os.remove</code> 的值就是 <code>nil</code>（同类还有 <code>os.rename</code>、<code>os.tmpname</code>、<code>os.execute</code>、<code>io.popen</code>）。这不是拼写错误。</p>
+              <p><strong>处理：</strong>当前 <code>Bridge.lua</code> 已改用 SDK 的 <code>LrFileUtils.exists</code> + <code>LrFileUtils.delete</code> 清理临时渲染文件，并且失败也不会让已完成的渲染失败。若仍看到这条报错，说明跑的仍是旧代码，请重新加载插件。</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>怎么确认 LrC 跑的是新版还是缓存旧版插件</summary>
+            <div class="detail-body">
+              <p><code>Bridge.lua</code> 里有 <code>BRIDGE_VERSION</code>（当前 <code>2026.09.28.1</code>）：</p>
+              <ul>
+                <li>启动 / 停止桥接的弹窗会显示版本号与参数数量，例如 <code>Bridge started (2026.09.28.1) with 107 develop parameters. ...</code>。</li>
+                <li>任务失败回传网页的红条会带前缀：<code>aiLr Bridge 2026.09.28.1: 原始报错</code>。</li>
+              </ul>
+              <p><strong>判断：</strong>弹窗或红条里<strong>没有</strong>版本号，或红条里出现的是老行号报错，即 LrC 仍在执行旧代码 → 回「文件 &gt; 增效工具管理器」重新加载，或重启 LrC；若重启后依旧，把插件「移除」后重新「添加」<code>aiLr.lrplugin</code> 文件夹。</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>提示「Lightroom 渲染超时；请确认 LrC 仍打开且 aiLr Bridge 正在运行」</summary>
+            <div class="detail-body">
+              <p><strong>原因：</strong>网页轮询等待上限约 4 分钟；期间插件没领取任务、没回传结果，或渲染本身卡住（超大 TIFF、磁盘满、LrC 正在做其它重活）。</p>
+              <p><strong>处理：</strong>确认桥接弹窗还在、插件仍连接；把最长边调小或格式换成 JPEG 再试；检查 <code>%TEMP%</code> 所在磁盘空间；实在不行重启桥接并重启 LrC。</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>生成方案提示「请先在模型设置中启动模型」</summary>
+            <div class="detail-body">
+              <p><strong>原因：</strong>后端要求显式启动模型后才允许推理（HTTP 409）。</p>
+              <p><strong>处理：</strong>右上角「模型设置」→「保存并启动」。若本地模型启动失败，先确认 Ollama 正在运行、模型已 <code>ollama pull</code>；云端模式检查 API Key 与 Base URL 是否有效。</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>提示「无法解码此 RAW 文件」</summary>
+            <div class="detail-body">
+              <p><strong>原因：</strong>LibRaw 不支持该机型 / 该文件版本，或文件损坏。</p>
+              <p><strong>处理：</strong>换一张 RAW 或同机型的另一个文件测试；确认文件完整；必要时先用 LrC / 厂商工具导出 DNG 或 JPEG 再上传。</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>上传被拒：文件太大</summary>
+            <div class="detail-body">
+              <p><strong>原因：</strong>普通图片默认上限 12 MB、RAW 默认上限 100 MB；导出的回传结果默认上限 300 MB。</p>
+              <p><strong>处理：</strong>在 <code>.env</code> 调整 <code>AILR_MAX_IMAGE_MB</code> / <code>AILR_MAX_RAW_IMAGE_MB</code> 后重启后端；或者导出更小的 JPEG。</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>start.bat 报端口被占用 / 服务起不来</summary>
+            <div class="detail-body">
+              <p><strong>原因：</strong>8000 或 5173 被别的程序占用（若是本机已在运行的 aiLr 服务，脚本会直接复用）。</p>
+              <p><strong>处理：</strong>用 <code>start.ps1 -Foreground</code> 看后端日志；确认占用进程（<code>Get-NetTCPConnection -LocalPort 8000</code>）后再决定关闭它还是改端口；<code>-DryRun</code> 可以只看脚本将要执行的命令。</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>预览图和我预期的调色效果不一样</summary>
+            <div class="detail-body">
+              <p><strong>原因：</strong>网页显示的是 LrC 回传的渲染图（「LrC 渲染」标签页），而「原图」标签页是上传前的预览；AI 与网页都不做像素级模拟。</p>
+              <p><strong>处理：</strong>在预览区切换到「LrC 渲染」查看真实结果；若想看得更大、更准，用「LrC 渲染并下载」导出后在 LrC / 看图软件里对比。</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>LrC 里参数没变化，但网页显示已连接</summary>
+            <div class="detail-body">
+              <p><strong>原因：</strong>插件写的是「当前选中照片」；LrC 里换了选中项、切到别的模块、或照片被筛选隐藏，都会导致写入对象与你的预期不一致。文件名不匹配时后端会拒绝创建任务。</p>
+              <p><strong>处理：</strong>在 LrC 中重新选中目标照片，确认网页底部显示的文件名与它一致，然后重新点击应用；查看 LrC 的「历史记录」面板确认写入动作。</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>换到其它 LrC 版本后个别参数报错</summary>
+            <div class="detail-body">
+              <p><strong>现象：</strong>渲染成功，但网页在 Lightroom Classic 区块出现黄色提示（<code>当前 LrC 拒绝了 N 项参数并已跳过</code>）；或红条提示 <code>Lightroom rejected every develop setting (...)</code>。</p>
+              <p><strong>原因：</strong>插件逐项调用 <code>LrDevelopController.setValue</code>。少数参数只在较新的 LrC 版本里存在（镜头校正与变换两组最典型），或照片的 process version 与参数不匹配，宿主就会拒绝该项。2012 后的参数名在插件里会被映射回控制器名（<code>Exposure2012 -> Exposure</code>、<code>Clarity2012 -> Clarity</code> 等 7 项）。</p>
+              <p><strong>处理：</strong>①黄色提示属于正常降级，其余参数已经生效，把不想要的参数在面板里关掉即可；②红条表示全部参数被拒，先在 LrC 里把照片的 process version 更新到当前版本再试；③点「检测 LrC 支持」让插件用只读方式列出当前 LrC 真正接受的参数，不支持的项会被置灰；④仍无法解决时，把带 <code>aiLr Bridge 版本号</code> 前缀的失败原文反馈回来。</p>
+            </div>
+          </details>
+        </section>
+
+        <section class="card" id="reference">
+          <h2><span class="step-no">10</span>端口 / 文件速查</h2>
+          <table>
+            <thead><tr><th>端口</th><th>服务</th><th>地址</th></tr></thead>
+            <tbody>
+              <tr><td>8000</td><td>FastAPI 后端（含 Lightroom 桥接 API）</td><td><code>http://127.0.0.1:8000</code> · 健康检查 <code>/api/health</code></td></tr>
+              <tr><td>5173</td><td>Vite 前端工作台</td><td><code>http://127.0.0.1:5173</code></td></tr>
+              <tr><td>11434</td><td>Ollama 本地模型</td><td><code>http://127.0.0.1:11434</code></td></tr>
+            </tbody>
+          </table>
+          <table>
+            <thead><tr><th>路径</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td><code>.env</code></td><td>由 <code>.env.example</code> 生成，后端读取的 <code>AILR_*</code> 变量</td></tr>
+              <tr><td><code>backend/data/model_config.json</code></td><td>网页保存的模型配置（含明文 API Key，已 gitignore）</td></tr>
+              <tr><td><code>aiLr.lrplugin\Info.lua</code></td><td>插件清单（菜单项绑定、SDK 版本、插件标识）</td></tr>
+              <tr><td><code>aiLr.lrplugin\Bridge.lua</code></td><td>桥接实现 + <code>BRIDGE_VERSION</code> 版本号</td></tr>
+              <tr><td><code>frontend\public\使用指南.html</code></td><td>本指南（随前端一起发布，地址 <code>/使用指南.html</code>）</td></tr>
+              <tr><td><code>frontend\dist\</code></td><td><code>npm --prefix frontend run build</code> 的产物，已 gitignore</td></tr>
+            </tbody>
+          </table>
+          <h3>可调环境变量</h3>
+          <table>
+            <thead><tr><th>变量</th><th>默认值</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td><code>AILR_MODEL_PROVIDER</code></td><td><code>ollama</code></td><td>也可填 <code>openai</code></td></tr>
+              <tr><td><code>AILR_MODEL_NAME</code></td><td><code>qwen2.5vl:7b</code></td><td>模型名 / 云端模型 ID</td></tr>
+              <tr><td><code>AILR_OLLAMA_BASE_URL</code></td><td><code>http://127.0.0.1:11434</code></td><td>Ollama 地址</td></tr>
+              <tr><td><code>AILR_OPENAI_BASE_URL</code></td><td><code>https://api.openai.com/v1</code></td><td>云端 Base URL</td></tr>
+              <tr><td><code>AILR_OPENAI_API_KEY</code></td><td>空</td><td>云端密钥，只放本地 <code>.env</code></td></tr>
+              <tr><td><code>AILR_MAX_IMAGE_MB</code> / <code>AILR_MAX_RAW_IMAGE_MB</code></td><td><code>12</code> / <code>100</code></td><td>普通图片 / RAW 上传上限</td></tr>
+            </tbody>
+          </table>
+          <p>命令行工具（可选）：仓库内置 MCP server，可用来查询与校验参数范围。</p>
+          <pre><code>.\.venv\Scripts\python.exe backend\mcp_server.py
+# 工具：list_develop_controls / validate_develop_settings</code></pre>
+        </section>
+
+        <section class="card" id="notice">
+          <h2><span class="step-no">11</span>数据与声明</h2>
+          <ul>
+            <li><strong>照片去向：</strong>选择本地 Ollama 时照片不出本机；选择云端 provider 时照片会发送到你所配置的云端服务，请自行确认合规与隐私要求。</li>
+            <li><strong>凭据：</strong>API Key 以明文保存在本机 <code>backend/data/model_config.json</code>（读取接口不会返回密钥），该文件已加入 <code>.gitignore</code>，不要提交或同步。</li>
+            <li><strong>网络暴露：</strong>桥接 API 只供本机插件轮询使用，不要把 FastAPI 绑定到公网地址。</li>
+            <li><strong>副作用：</strong>预览与导出都会改写 LrC 当前选中照片的 Develop 设置并写入历史记录，请用副本 / 虚拟副本试验。</li>
+            <li><strong>边界：</strong>本机若没有安装 Lightroom Classic，插件渲染无法验收；开发环境只做静态检查与模拟往返测试。</li>
+            <li><strong>用途：</strong>本软件仅供学习开发使用。</li>
+          </ul>
+        </section>
+
+      </main>
+    </div>
+
+    <footer class="footer">
+      aiLr 智能调色工作台 · 使用指南对应插件 Bridge 版本 2026.09.28.1。本软件仅供学习开发使用，请勿据此做商业承诺性交付。
+      <br>
+      Copyright 2026 <a href="">qincnd</a> All Rights Reserved
+    </footer>
+  </body>
+</html>

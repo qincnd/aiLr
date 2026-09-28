@@ -108,5 +108,86 @@ class LightroomBridgeApiTests(unittest.TestCase):
         self.assertEqual(result["error"], "No selected Lightroom photo")
 
 
+    def test_develop_controls_endpoint_lists_every_group(self) -> None:
+        payload = self.client.get("/api/develop/controls").json()
+        groups = {group["id"]: group for group in payload["groups"]}
+        keys = {control["key"] for group in payload["groups"] for control in group["controls"]}
+
+        self.assertEqual(groups["basic"]["label"], "基本")
+        self.assertIn("ToneCurvePV2012", keys)
+        self.assertIn("ColorGradeHighlightSat", keys)
+        self.assertEqual(payload["total"], len(keys))
+
+    def test_job_lines_encode_numbers_enums_booleans_and_curves(self) -> None:
+        self.client.post("/api/lightroom/heartbeat", content="DSC_1001.NEF")
+        created = self.client.post(
+            "/api/lightroom/jobs",
+            json={
+                "action": "preview",
+                "settings": {
+                    "Exposure2012": 0.35,
+                    "ToneCurveName": "Medium Contrast",
+                    "AutoTone": True,
+                    "ToneCurvePV2012": "0,0;64,52;255,255",
+                },
+            },
+        )
+        self.assertEqual(created.status_code, 200)
+
+        lines = self.client.get("/api/lightroom/jobs/next").text.splitlines()
+        self.assertIn("Exposure2012=0.35", lines)
+        self.assertIn("ToneCurveName=Medium%20Contrast", lines)
+        self.assertIn("AutoTone=true", lines)
+        self.assertIn("ToneCurvePV2012=0%2C0%3B64%2C52%3B255%2C255", lines)
+
+    def test_probe_job_needs_no_settings_and_reports_host_capabilities(self) -> None:
+        offline = self.client.post("/api/lightroom/jobs", json={"action": "probe", "settings": {}})
+        self.assertEqual(offline.status_code, 409)
+
+        # A probe only reads develop values, so it works without a selected photo.
+        self.client.post("/api/lightroom/heartbeat", content="")
+        created = self.client.post("/api/lightroom/jobs", json={"action": "probe", "settings": {}})
+        self.assertEqual(created.status_code, 200)
+        job_id = created.json()["job_id"]
+
+        claimed = self.client.get("/api/lightroom/jobs/next").text.splitlines()
+        self.assertEqual(claimed[:5], [job_id, "probe", "JPEG", "90", "2560"])
+        self.assertEqual(len(claimed), 5)
+
+        report = "SUPPORTED=Exposure2012,Dehaze\nUNSUPPORTED=PerspectiveScale: unknown parameter"
+        reported = self.client.post(f"/api/lightroom/jobs/{job_id}/report", content=report)
+        self.assertEqual(reported.status_code, 200)
+        status = self.client.get(f"/api/lightroom/jobs/{job_id}").json()
+        self.assertEqual(status["status"], "processing")
+        self.assertEqual(status["report"], report)
+
+    def test_rejected_settings_report_keeps_the_render_completed(self) -> None:
+        self.client.post("/api/lightroom/heartbeat", content="DSC_1001.NEF")
+        created = self.client.post(
+            "/api/lightroom/jobs",
+            json={"action": "preview", "settings": {"Exposure2012": 0.2, "PerspectiveScale": 120}},
+        )
+        job_id = created.json()["job_id"]
+        self.client.get("/api/lightroom/jobs/next")
+        self.client.post(
+            f"/api/lightroom/jobs/{job_id}/report",
+            content="APPLIED=1\nREJECTED=PerspectiveScale\nPerspectiveScale: unknown parameter",
+        )
+        self.client.post(
+            f"/api/lightroom/jobs/{job_id}/result",
+            content=b"rendered-jpeg",
+            headers={"Content-Type": "image/jpeg"},
+        )
+
+        status = self.client.get(f"/api/lightroom/jobs/{job_id}").json()
+        self.assertEqual(status["status"], "completed")
+        self.assertIn("REJECTED=PerspectiveScale", status["report"])
+
+    def test_render_jobs_require_settings(self) -> None:
+        self.client.post("/api/lightroom/heartbeat", content="DSC_1001.NEF")
+        response = self.client.post("/api/lightroom/jobs", json={"action": "preview", "settings": {}})
+        self.assertEqual(response.status_code, 422)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,4 +1,7 @@
+import json
+
 import httpx
+from typing import Any
 from urllib.parse import quote, unquote
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,6 +27,7 @@ from app.services.lightroom_bridge import (
     LightroomJobRequest,
     lightroom_bridge,
 )
+from app.settings import develop_controls_payload, model_keys_for
 
 
 app = FastAPI(title="aiLr", version="0.1.0")
@@ -57,6 +61,28 @@ async def create_lightroom_job(payload: LightroomJobRequest) -> dict[str, str]:
     return {"job_id": job.job_id, "status": job.status, "action": payload.action}
 
 
+def _encode_setting_value(value: Any) -> str:
+    """Serialize one develop value for the line based plug-in protocol.
+
+    Numbers stay readable (``Temperature=5600``), while booleans, enum names and
+    point curves are percent-encoded so the plug-in can decode them without
+    guessing which parameter it is looking at.
+    """
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return f"{float(value):g}"
+    if isinstance(value, str):
+        return quote(value, safe="")
+    if isinstance(value, list):
+        # Point curves travel as "x,y;x,y" so the plug-in can rebuild the table.
+        return quote(
+            ";".join(f"{float(point[0]):g},{float(point[1]):g}" for point in value),
+            safe="",
+        )
+    raise ValueError(f"无法编码的调色参数值: {value!r}")
+
+
 @app.get("/api/lightroom/jobs/next")
 async def next_lightroom_job() -> Response:
     job = await lightroom_bridge.take_next_job()
@@ -65,7 +91,7 @@ async def next_lightroom_job() -> Response:
 
     request = job.request
     lines = [job.job_id, request.action, request.format, str(request.quality), str(request.max_dimension)]
-    lines.extend(f"{key}={value:g}" for key, value in request.settings.items())
+    lines.extend(f"{key}={_encode_setting_value(value)}" for key, value in request.settings.items())
     return Response("\n".join(lines), media_type="text/plain; charset=utf-8")
 
 
@@ -73,7 +99,7 @@ async def next_lightroom_job() -> Response:
 async def complete_lightroom_job(job_id: str, request: Request) -> dict[str, str]:
     body = await request.body()
     if not body or len(body) > MAX_RESULT_BYTES:
-        raise HTTPException(status_code=413, detail="Lightroom 图片为空或超过 100 MB")
+        raise HTTPException(status_code=413, detail=f"Lightroom 图片为空或超过 {MAX_RESULT_BYTES // (1024 * 1024)} MB")
     try:
         job = await lightroom_bridge.complete_job(
             job_id,
@@ -97,6 +123,16 @@ async def fail_lightroom_job(job_id: str, request: Request) -> dict[str, str]:
     return {"job_id": job_id, "status": job.status}
 
 
+@app.post("/api/lightroom/jobs/{job_id}/report")
+async def report_lightroom_job(job_id: str, request: Request) -> dict[str, str]:
+    """Collect a plug-in report: rejected develop keys or a parameter probe result."""
+    report = (await request.body()).decode("utf-8", errors="replace")
+    job = await lightroom_bridge.record_report(job_id, report)
+    if not job:
+        raise HTTPException(status_code=404, detail="Lightroom 渲染任务不存在或已结束")
+    return {"job_id": job_id, "status": job.status}
+
+
 @app.get("/api/lightroom/jobs/{job_id}")
 async def get_lightroom_job(job_id: str) -> dict[str, object]:
     job = await lightroom_bridge.get_job(job_id)
@@ -109,6 +145,7 @@ async def get_lightroom_job(job_id: str) -> dict[str, object]:
         "filename": job.filename,
         "content_type": job.content_type,
         "error": job.error,
+        "report": job.report,
     }
 
 
@@ -167,6 +204,12 @@ def health() -> dict[str, str | bool]:
     }
 
 
+@app.get("/api/develop/controls")
+def develop_controls() -> dict[str, object]:
+    """Every Lightroom Classic develop parameter aiLr can drive, grouped by panel."""
+    return develop_controls_payload()
+
+
 @app.get("/api/model/config")
 def get_model_configuration() -> dict[str, str | bool]:
     return public_model_config()
@@ -186,15 +229,22 @@ async def list_local_models() -> dict[str, list[dict[str, object]]]:
         ) from error
 
     try:
-        models = response.json().get("models", [])
+        payload = response.json()
     except ValueError as error:
         raise HTTPException(status_code=502, detail="Ollama 返回了无效的模型清单") from error
 
-    result = []
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=502, detail="Ollama 返回了无效的模型清单")
+
+    listed = payload.get("models", [])
+    models = listed if isinstance(listed, list) else []
+
+    result: list[dict[str, object]] = []
     for model in models:
         if not isinstance(model, dict) or not isinstance(model.get("name"), str):
             continue
-        details = model.get("details") if isinstance(model.get("details"), dict) else {}
+        raw_details = model.get("details")
+        details = raw_details if isinstance(raw_details, dict) else {}
         result.append(
             {
                 "name": model["name"],
@@ -284,14 +334,47 @@ async def preview_image(photo: UploadFile = File(...)) -> Response:
     return Response(content=preview, media_type=preview_type)
 
 
+def _parse_allowed_keys(raw: str) -> tuple[str, ...] | None:
+    """Read the "allowed for the model" set the web UI sends with a suggestion request.
+
+    Empty input means the user did not narrow anything, so the registry default is
+    used: every control except the version sensitive (experimental) ones. A non
+    empty list is intersected with the registry, so unknown names are ignored and
+    asking for no usable key at all is a client error.
+    """
+    text = raw.strip()
+    if not text:
+        return None
+
+    try:
+        payload: Any = json.loads(text)
+    except json.JSONDecodeError:
+        payload = [part.strip() for part in text.replace("\n", ",").split(",") if part.strip()]
+    if isinstance(payload, str):
+        payload = [payload]
+    if not isinstance(payload, list) or not all(isinstance(name, str) for name in payload):
+        raise ValueError("allowed_keys 需要是参数名数组")
+
+    keys = model_keys_for(payload)
+    if not keys:
+        raise ValueError("请至少允许一个调色参数参与 AI 调整")
+    return keys
+
+
 @app.post("/api/suggestions")
 async def suggest(
     prompt: str = Form(""),
     photo: UploadFile = File(...),
+    allowed_keys: str = Form(""),
 ) -> dict[str, object]:
     if not runtime.active:
         raise HTTPException(status_code=409, detail="请先在模型设置中启动模型")
     image_data, content_type, is_raw = await read_photo_upload(photo)
+
+    try:
+        parsed_keys = _parse_allowed_keys(allowed_keys)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
     try:
         image, mime_type = prepare_image_for_model(
@@ -299,7 +382,7 @@ async def suggest(
             photo.filename if is_raw else None,
             content_type,
         )
-        result = await generate_suggestion(prompt, image, mime_type)
+        result = await generate_suggestion(prompt, image, mime_type, parsed_keys)
     except ImagePreparationError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except RuntimeError as error:

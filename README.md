@@ -1,16 +1,20 @@
 # aiLr 智能调色工作台
 
 面向 Lightroom Classic 的 AI 调色工作台：网页负责选图和 AI 调色，Python API 调用本地视觉模型或 OpenAI-compatible 云端视觉模型；通过 Lightroom Classic Lua 插件把参数应用到当前选中的目录照片，由 LrC 实际渲染预览和导出。
+插件已接入 LrC 的全部可用 Develop 参数（107 项，覆盖基本、白平衡、色调曲线、混色器 HSL、颜色分级、分离色调、细节、效果、镜头校正、变换与黑白/自动色调），参数表以 `backend/app/settings.py` 为唯一真值源，网页、MCP 与插件共用同一份定义；「全部 LrC 调色参数」面板里的开关表示「是否允许大模型调整该参数」——默认除 19 项实验参数外全部允许，行末的 `＋` 可把参数以当前值手工加入本次渲染，所以整套流程不依赖 AI 建议。
+与 LrC 版本或镜头配置文件绑定的少数参数（镜头校正、去边、变换/Upright）标记为「实验」：默认不允许模型调整、也不会随建议写入，需要时可在面板里手动允许或直接用 `＋` 加入本次渲染；宿主拒绝时只跳过该项并在网页给出提示，不会让整次渲染失败。可用网页上的「检测 LrC 支持」让插件在当前 LrC 版本上逐项自检。
+目前未完成在前端页面实时预览调色后的图像，请手动打开LrC软件完成调色结果的查看。
 
 ## 技术结构
 
 - `frontend/`：Vite、React、TypeScript 调色工作台。
 - `backend/app/`：FastAPI、模型适配器与 Lightroom 参数校验。
 - `backend/mcp_server.py`：官方 MCP Python SDK v2 stdio server，提供参数范围查询与校验工具。
+- `frontend/public/使用指南.html`：静态使用指南页，前端顶栏「使用指南」按钮在新标签打开（`/使用指南.html`），随 Vite 构建复制到 `dist/`。
 - `aiLr.lrplugin/`：Lightroom Classic SDK Lua 插件（目录名必须以 `.lrplugin` 结尾才能被 LrC 加载），通过本地队列接收网页预览/导出任务。
 - `backend/data/model_config.json`：网页保存的模型连接配置，运行后自动生成且已加入 Git 忽略。
 
-调用链：网页上传照片和调色意图 -> Ollama/云端视觉模型生成受约束的 Develop 参数 -> 网页微调 -> Lightroom 插件将参数写入当前选中照片并渲染 JPEG 预览 -> 按 JPEG/PNG/TIFF、质量和最长边选项导出并下载。网页原图与 LrC 当前选中照片文件名必须一致。启动 FastAPI 或 Vite 不会加载大模型；模型未显式启动时，建议接口会拒绝推理请求。选择云端 provider 时，照片会发送到配置的云端服务。
+调用链：网页上传照片、调色意图与「允许模型调整的参数集合」-> Ollama/云端视觉模型以资深调色师视角先诊断再输出受约束的 Develop 参数（prompt 固定为「角色 + 工作流：先读图、先修影调与白平衡、再塑形与配色、最后细节与效果 + 输出契约」，并声明本插件只有全局滑块，默认可输出除实验参数外的全部 88 项，含数值、枚举、开关与点曲线）-> 网页微调（也可完全手动挑选参数）-> Lightroom 插件将参数写入当前选中照片并渲染 JPEG 预览 -> 按 JPEG/PNG/TIFF、质量和最长边选项导出并下载。网页原图与 LrC 当前选中照片文件名必须一致。启动 FastAPI 或 Vite 不会加载大模型；模型未显式启动时，建议接口会拒绝推理请求。选择云端 provider 时，照片会发送到配置的云端服务。
 
 ## 环境要求
 
@@ -103,7 +107,7 @@ AILR_OPENAI_API_KEY=你的密钥
 
 ## MCP
 
-VS Code MCP 配置已放在 `.vscode/mcp.json`。创建 `.venv` 并安装依赖后，在 VS Code 的 MCP Servers 面板启动 `ailr-lightroom`，可调用 `list_develop_controls` 与 `validate_develop_settings`。独立终端也可运行：
+VS Code MCP 配置已放在 `.vscode/mcp.json`。创建 `.venv` 并安装依赖后，在 VS Code 的 MCP Servers 面板启动 `ailr-lightroom`，可调用 `list_develop_controls`（分组返回全部 107 个参数及其类型、范围、默认值与 LrC 控制器名）、`list_develop_ranges`（纯数值范围）与 `validate_develop_settings`。独立终端也可运行：
 
 ```powershell
 .\.venv\Scripts\python.exe backend\mcp_server.py
@@ -115,8 +119,9 @@ stdio 是机器协议通道，MCP 服务不要向 stdout 输出普通日志。
 
 1. 在 LrC 的“文件 > 增效工具管理器”中添加 `aiLr.lrplugin` 文件夹（选中该文件夹本身；目录名必须以小写 `.lrplugin` 结尾）。
 2. 在 LrC“图库”模块菜单栏右侧点击 `aiLr: Start/Stop Web Bridge` 启动轮询；保持 LrC 和 FastAPI 服务运行，并在 LrC 中选中与网页上传同名的照片。
-3. 网页生成建议后点击“应用到 LrC 并预览”。插件通过 `LrDevelopController` 修改选中照片，再用 `LrExportSession` 渲染 JPEG 回传网页。
+3. 网页生成建议后点击“应用到 LrC 并预览”，或在「全部 LrC 调色参数」面板手动挑选参数后直接渲染。插件通过 `LrDevelopController` 修改选中照片，再用 `LrExportSession` 渲染 JPEG 回传网页。被当前 LrC 版本拒绝的参数会被跳过并在网页给出提示。
 4. 选择 JPEG、PNG 或 TIFF，调整 JPEG 质量/最长边，点击“LrC 渲染并下载”获取 Lightroom 实际渲染的文件。
+5. 首次接入后建议点一次「检测 LrC 支持」：插件用只读的 `LrDevelopController.getValue` 逐项自检 107 个参数，网页会标出当前 LrC 版本不接受的项（不会修改照片）。
 
 LrC 的 Develop 参数会写入当前选中照片并产生可撤销的历史记录；预览不是临时模拟。Lightroom 插件通过轮询 `127.0.0.1:8000` 的本地任务 API 工作，未连接插件或文件名不匹配时，网页会阻止渲染。当前执行环境未安装 Lightroom Classic，真实宿主内的插件渲染仍需在安装 LrC 的机器上完成验收。
 
@@ -131,11 +136,6 @@ LrC 的 Develop 参数会写入当前选中照片并产生可撤销的历史记�
 ## Lightroom Classic 集成边界
 
 请在 Adobe Lightroom Classic 中启用插件，在 Adobe Lightroom Classic 首页 文件 -> 增效工具管理器 内导入 aiLr.lrplugin 插件后才可以与该程序建立连接
-
-
-
-
-
 
 ## 声明 
 本软件仅供学习开发使用

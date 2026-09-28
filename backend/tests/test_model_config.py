@@ -90,6 +90,66 @@ class ModelConfigurationApiTests(unittest.TestCase):
         self.assertEqual(response.json()["models"][1]["parameter_size"], "8.3B")
         self.assertFalse(runtime.active)
 
+    def test_skips_malformed_local_model_entries(self) -> None:
+        config.save_model_config(
+            config.ModelConfig(model_name="selected", ollama_base_url="http://ollama.test")
+        )
+
+        class FakeAsyncClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return None
+
+            async def get(self, url: str):
+                request = httpx.Request("GET", url)
+                return httpx.Response(
+                    200,
+                    json={
+                        "models": [
+                            "not-a-dict",
+                            {"name": 42},
+                            {"name": "no-details:1b", "size": 100},
+                            {"name": "bad-details:1b", "details": "oops"},
+                        ]
+                    },
+                    request=request,
+                )
+
+        with patch("app.main.httpx.AsyncClient", return_value=FakeAsyncClient()):
+            response = self.client.get("/api/models/local")
+
+        self.assertEqual(response.status_code, 200)
+        models = response.json()["models"]
+        self.assertEqual([item["name"] for item in models], ["bad-details:1b", "no-details:1b"])
+        self.assertEqual(models[0]["family"], "")
+        self.assertEqual(models[0]["parameter_size"], "")
+        self.assertEqual(models[0]["size"], 0)
+        self.assertEqual(models[1]["size"], 100)
+
+    def test_rejects_non_object_model_list_payload(self) -> None:
+        config.save_model_config(
+            config.ModelConfig(model_name="selected", ollama_base_url="http://ollama.test")
+        )
+
+        class FakeAsyncClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return None
+
+            async def get(self, url: str):
+                request = httpx.Request("GET", url)
+                return httpx.Response(200, json=["unexpected"], request=request)
+
+        with patch("app.main.httpx.AsyncClient", return_value=FakeAsyncClient()):
+            response = self.client.get("/api/models/local")
+
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("无效的模型清单", response.json()["detail"])
+
     def test_ollama_load_happens_only_after_start_request(self) -> None:
         config.save_model_config(config.ModelConfig(model_name="test-vision"))
         calls: list[dict[str, Any]] = []
@@ -128,6 +188,7 @@ class ModelConfigurationApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(config.load_model_config().api_key, "test-secret")
+
     def test_suggestion_requires_explicit_model_start(self) -> None:
         response = self.client.post(
             "/api/suggestions",

@@ -12,6 +12,7 @@ from app.settings import (
     DEVELOP_CONTROLS,
     DEVELOP_GROUPS,
     DevelopControl,
+    VIGNETTE_SAFE_WINDOW,
     VIGNETTE_SETTING_KEYS,
     model_keys_for,
     review_develop_settings,
@@ -29,9 +30,9 @@ SYSTEM_PROMPT_CRAFT = """How you work this photo:
 4. Detail and effects come last and only when the photo needs them: sharpening for soft pixels, noise reduction for high ISO, grain or a vignette when the brief asks for a look.
 5. Stay subtle unless the brief demands otherwise: most sliders land inside -30 to 30, exposure inside -1 to 1 EV, and skin, sky and highlight detail have to stay believable. Never let one move cancel another - do not raise Vibrance and Saturation together, do not lift the shadows and raise the black point together.
 6. Stop when the look is reached: a single slider is not an answer when the photo needs light, colour and detail work.
-7. This workspace writes global develop sliders only: no masks, no local adjustments, no crop and no healing brush exist - the PostCrop vignette keys are global effects and are fine - so change only what these sliders can change and describe the edit in summary instead of promising local work."""
+7. This workspace writes global develop sliders only: no masks, no local adjustments, no crop and no healing brush exist, so change only what these sliders can change and describe the edit in summary instead of promising local work."""
 
-SYSTEM_PROMPT_CONTRACT = """Answer with one JSON object holding summary and settings. summary: one or two sentences naming your diagnosis and the look you are going for, written for the photographer. settings: keys must come from the allowed lists below, every value uses the Lightroom scale, and any key you leave out keeps its Lightroom default. Never invent a key and never emit a key outside those lists. Numbers must sit inside the minimum and maximum listed for their key and enum keys must use one of their listed choices: Lightroom rejects anything outside them, and an answer that overflows is sent straight back to you for another attempt, so keep the first answer legal. Temperature is an absolute white-balance value in Kelvin from 2000 to 50000, not a normalized 0-to-1 value or a relative adjustment; natural daylight is usually around 5000 to 6500 K. Do not output values such as 0.5 for Temperature."""
+SYSTEM_PROMPT_CONTRACT = """Answer with one JSON object holding summary and settings. summary: one or two sentences naming your diagnosis and the look you are going for, written for the photographer in Simplified Chinese (简体中文). settings: keys must come from the allowed lists below, every value uses the Lightroom scale, and any key you leave out keeps its Lightroom default. Never invent a key and never emit a key outside those lists. Numbers must sit inside the range shown for their key in those lists (a numeric key printed without a bracket takes the Lightroom default scale of -100 to 100) and enum keys must use one of their listed choices: Lightroom rejects anything outside them, and an answer that overflows is sent straight back to you for another attempt, so keep the first answer legal. Omit any key whose value is its Lightroom default or that makes no visible change: padding the answer with do-nothing values is as wrong as answering with a single slider. Temperature is an absolute white-balance value in Kelvin from 2000 to 50000, not a normalized 0-to-1 value or a relative adjustment; natural daylight is usually around 5000 to 6500 K. Do not output values such as 0.5 for Temperature."""
 
 # Fixed part of every prompt: role, working method, output contract. The allowed
 # key lists are appended per request by _build_system_prompt.
@@ -76,14 +77,27 @@ REFERENCE_IMAGE_RULE = (
 
 # Only appended when the request unlocked the mask (the web UI mask switch): the Post Crop
 # vignette is the one effect that can draw a shape the eye reads as a region of the photo,
-# so the model is told the window that keeps it soft instead of a circle.
+# so the model is told the window that keeps it soft instead of a circle - and told that the
+# keys are global effects, which the fixed prompt deliberately does not mention while the mask
+# is off (a key outside the allowed set must stay invisible to the model).
+# The numbers are read out of settings.VIGNETTE_SAFE_WINDOW, the same window
+# review_develop_settings() reports and tame_vignette_artifacts() clamps to, so the prompt can
+# never promise a window the guard would reject.
+_VIGNETTE_AMOUNT_LOW, _VIGNETTE_AMOUNT_HIGH = VIGNETTE_SAFE_WINDOW["PostCropVignetteAmount"]
+_VIGNETTE_FEATHER_MIN = VIGNETTE_SAFE_WINDOW["PostCropVignetteFeather"][0]
+_VIGNETTE_MIDPOINT_LOW, _VIGNETTE_MIDPOINT_HIGH = VIGNETTE_SAFE_WINDOW["PostCropVignetteMidpoint"]
+_VIGNETTE_ROUNDNESS_MAX = VIGNETTE_SAFE_WINDOW["PostCropVignetteRoundness"][1]
+
 VIGNETTE_RULE = (
     "The Post Crop vignette is unlocked for this answer: use it when the brief asks for a "
-    "vignette, and keep it soft and frame-hugging - PostCropVignetteAmount inside -60 to 60, "
-    "PostCropVignetteFeather at 25 or more, PostCropVignetteMidpoint between 20 and 80, and "
-    "PostCropVignetteRoundness at 25 or below with Style 1 or 2. Anything more draws a "
-    "hard-edged circle across the frame, which reads as a broken mask stuck on the photo, and "
-    "such an answer is sent straight back to you."
+    "vignette - it is a global effect applied to the whole frame, not a local adjustment - and "
+    "keep it soft and frame-hugging: "
+    f"PostCropVignetteAmount inside {_VIGNETTE_AMOUNT_LOW:g} to {_VIGNETTE_AMOUNT_HIGH:g}, "
+    f"PostCropVignetteFeather at {_VIGNETTE_FEATHER_MIN:g} or more, "
+    f"PostCropVignetteMidpoint between {_VIGNETTE_MIDPOINT_LOW:g} and {_VIGNETTE_MIDPOINT_HIGH:g}, and "
+    f"PostCropVignetteRoundness at {_VIGNETTE_ROUNDNESS_MAX:g} or below with Style 1 or 2. "
+    "Anything more draws a hard-edged circle across the frame, which reads as a broken mask "
+    "stuck on the photo, and such an answer is sent straight back to you."
 )
 
 # Extra turns the model gets to bring an overflowing answer back into the Lightroom
@@ -95,6 +109,22 @@ MAX_REPAIR_ISSUES = 12
 
 def _choice_list(control: DevelopControl) -> str:
     return " / ".join(str(choice) for choice, _label in control.choices)
+
+
+# The slider bounds every Lightroom numeric control defaults to (settings._slider). A numeric
+# key that keeps this range is printed bare; one that does not (Temperature, Exposure2012,
+# SharpenRadius, the defringe amounts ...) carries its real bounds in brackets. That keeps the
+# output contract honest - it promises a range per numeric key - at the cost of one bracket
+# per unusual key instead of one for each of the 66 numeric controls, which matters because
+# every request pays for this prompt and the cloud path has no JSON schema to fall back on.
+DEFAULT_NUMBER_RANGE = (-100.0, 100.0)
+
+
+def _number_label(control: DevelopControl) -> str:
+    """A numeric key, with its slider range only when it is not the default scale."""
+    if (control.minimum, control.maximum) == DEFAULT_NUMBER_RANGE:
+        return control.key
+    return f"{control.key} {control.minimum:g}..{control.maximum:g}"
 
 
 # Panel labels the prompt uses (DEVELOP_GROUPS ids keep the registry authoritative;
@@ -199,7 +229,8 @@ def _build_system_prompt(
         scope = "Return the one setting that matches the brief best."
     else:
         scope = (
-            f"Return {low} to {high} settings, covering every aspect the photo or the brief "
+            f"Return {low} to {high} settings (fewer only when the photo is already that close "
+            "to the brief, and say why in summary), covering every aspect the photo or the brief "
             "actually needs - light, white balance, contrast, colour, a curve, detail, effects "
             "- instead of stopping at one or two sliders."
         )
@@ -217,7 +248,8 @@ def _build_system_prompt(
     if preferred:
         sections.append(
             "Base sliders used by nearly every edit: "
-            f"{', '.join(preferred)}. Include the ones this photo and brief need and skip the rest."
+            f"{', '.join(_number_label(DEVELOP_CONTROLS[key]) for key in preferred)}. "
+            "Include the ones this photo and brief need and skip the rest."
         )
     if extra_numbers:
         # One bullet per Lightroom panel: a panel plus its trigger tells the model
@@ -231,7 +263,8 @@ def _build_system_prompt(
             if group_keys:
                 bullets.append(
                     f"- {_group_title(group_id)} "
-                    f"({_group_trigger(group_id)}): {', '.join(group_keys)}"
+                    f"({_group_trigger(group_id)}): "
+                    f"{', '.join(_number_label(DEVELOP_CONTROLS[key]) for key in group_keys)}"
                 )
         sections.append(
             "Further groups - reach for a group as soon as the photo or the brief shows its "
@@ -439,7 +472,9 @@ def _repair_instruction(problems: list[str]) -> str:
     if len(problems) > len(listed):
         bullets += f"\n- ...and {len(problems) - len(listed)} more of the same kind."
     return (
-        "Your last answer breaks these rules:\n"
+        "Your last answer breaks these rules (each item below names a parameter key with the "
+        "value and the limit it broke, in Chinese - the key names and the numbers are what "
+        "matter):\n"
         f"{bullets}\n"
         "Answer once more with one complete JSON object holding summary and settings: fix every "
         "item above - keep that value inside the range or choice list it was given, and follow the "

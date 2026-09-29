@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.settings import (
     MODEL_SETTING_KEYS,
     SettingsValidationError,
+    VIGNETTE_SAFE_WINDOW,
     VIGNETTE_SETTING_KEYS,
     develop_controls_payload,
     model_keys_for,
@@ -390,7 +391,11 @@ class DevelopSettingsTests(unittest.TestCase):
         ):
             self.assertIn(key, prompt)
         # The mask (Post Crop vignette) is off by default, so the vignette keys and their
-        # window only show up once the mask switch puts them into the allowed set.
+        # window only show up once the mask switch puts them into the allowed set. The fixed
+        # part of the prompt must not mention it either - "PostCrop" catches both the key names
+        # and a prose mention such as "the PostCrop vignette keys are fine", which used to slip
+        # past the narrower PostCropVignette check below.
+        self.assertNotIn("PostCrop", prompt)
         self.assertNotIn("PostCropVignette", prompt)
         unlocked = _build_system_prompt(["PostCropVignetteAmount"])
         self.assertIn("PostCropVignetteAmount", unlocked)
@@ -450,6 +455,47 @@ class DevelopSettingsTests(unittest.TestCase):
                 ["Vibrance", "Saturation", "Exposure2012", "Contrast2012", "Texture", "Dehaze"]
             ),
         )
+
+    def test_system_prompt_prints_ranges_for_numeric_keys_off_the_default_scale(self) -> None:
+        """数值键带真实范围，默认 -100..100 的键保持裸名，契约说明这个约定。"""
+        prompt = _build_system_prompt()
+
+        self.assertIn("Exposure2012 -5..5", prompt)
+        self.assertIn("Temperature 2000..50000", prompt)
+        self.assertIn("Tint -150..150", prompt)
+        # 绝大多数滑块就是 -100..100，不重复写括号；契约里交代「没有括号即 -100 到 100」。
+        self.assertIn("Contrast2012,", prompt)
+        self.assertNotIn("Contrast2012 -100..100", prompt)
+        self.assertIn("-100 to 100", prompt)
+
+        # 手动允许实验参数时同样带范围，否则云端路径（没有 JSON Schema）无从得知这些边界。
+        unlocked = _build_system_prompt(["DefringePurpleAmount", "PerspectiveScale"])
+        self.assertIn("DefringePurpleAmount 0..20", unlocked)
+        self.assertIn("PerspectiveScale 50..150", unlocked)
+
+    def test_system_prompt_vignette_window_is_read_from_the_guard(self) -> None:
+        """暗角窗口直接取自 VIGNETTE_SAFE_WINDOW，改护栏不会再和提示词漂移。"""
+        unlocked = _build_system_prompt(["PostCropVignetteAmount"])
+        amount = VIGNETTE_SAFE_WINDOW["PostCropVignetteAmount"]
+        feather = VIGNETTE_SAFE_WINDOW["PostCropVignetteFeather"]
+        midpoint = VIGNETTE_SAFE_WINDOW["PostCropVignetteMidpoint"]
+        roundness = VIGNETTE_SAFE_WINDOW["PostCropVignetteRoundness"]
+
+        self.assertIn(f"PostCropVignetteAmount inside {amount[0]:g} to {amount[1]:g}", unlocked)
+        self.assertIn(f"PostCropVignetteFeather at {feather[0]:g} or more", unlocked)
+        self.assertIn(
+            f"PostCropVignetteMidpoint between {midpoint[0]:g} and {midpoint[1]:g}", unlocked
+        )
+        self.assertIn(f"PostCropVignetteRoundness at {roundness[1]:g} or below", unlocked)
+
+    def test_output_contract_asks_for_a_chinese_summary_and_no_do_nothing_keys(self) -> None:
+        """summary 用简体中文；不许用等于默认值／没有可见变化的键凑数。"""
+        prompt = _build_system_prompt()
+
+        self.assertIn("Simplified Chinese", prompt)
+        self.assertIn("Omit any key whose value is its Lightroom default", prompt)
+        # 照片本来就接近目标时允许少于 3 项，只要在 summary 里说清理由。
+        self.assertIn("fewer only when the photo is already that close", prompt)
 
     def test_system_prompt_explains_reference_parameters_only_for_presets(self) -> None:
         """预设合成出来的「参考参数」块：不是强制规范，但也不能整段忽略。"""

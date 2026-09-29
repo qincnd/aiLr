@@ -417,6 +417,7 @@ async def suggest(
     prompt: str = Form(""),
     photo: UploadFile = File(...),
     allowed_keys: str = Form(""),
+    reference: UploadFile | None = File(None),
 ) -> dict[str, object]:
     if not runtime.active:
         raise HTTPException(status_code=409, detail="请先在模型设置中启动模型")
@@ -427,13 +428,33 @@ async def suggest(
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
+    # 参考图模式：把用户上传的第二张图作为"参考风格"，只借用它的调色氛围，不照搬内容。
+    reference_upload: tuple[bytes, str, bool] | None = None
+    if reference is not None and (reference.filename or ""):
+        reference_upload = await read_photo_upload(reference)
+
     try:
         image, mime_type = prepare_image_for_model(
             image_data,
             photo.filename if is_raw else None,
             content_type,
         )
-        result = await generate_suggestion(prompt, image, mime_type, parsed_keys)
+        reference_image = reference_mime_type = None
+        if reference_upload is not None:
+            ref_data, ref_type, ref_is_raw = reference_upload
+            reference_image, reference_mime_type = prepare_image_for_model(
+                ref_data,
+                reference.filename if ref_is_raw else None,
+                ref_type,
+            )
+        result = await generate_suggestion(
+            prompt,
+            image,
+            mime_type,
+            parsed_keys,
+            reference_image=reference_image,
+            reference_mime_type=reference_mime_type,
+        )
     except ImagePreparationError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except RuntimeError as error:

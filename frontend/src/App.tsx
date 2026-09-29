@@ -241,6 +241,11 @@ export default function App() {
   const [photo, setPhoto] = useState<File | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string>()
   const [previewLoading, setPreviewLoading] = useState(false)
+  // 输入模式：'prompt' 只用文字方向；'reference' 额外上传一张参考图，让模型借用它的调色风格。
+  const [inputMode, setInputMode] = useState<'prompt' | 'reference'>('prompt')
+  const [referencePhoto, setReferencePhoto] = useState<File | null>(null)
+  const [referencePreviewUrl, setReferencePreviewUrl] = useState<string>()
+  const [referenceLoading, setReferenceLoading] = useState(false)
   const [lightroomPreviewUrl, setLightroomPreviewUrl] = useState<string>()
   const [previewMode, setPreviewMode] = useState<'original' | 'lightroom'>('original')
   const [prompt, setPrompt] = useState('自然通透，保留天空层次，绿色不要过饱和')
@@ -346,7 +351,7 @@ export default function App() {
     }
 
     void loadPreview()
-    return () => {
+        return () => {
       cancelled = true
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
@@ -358,11 +363,74 @@ export default function App() {
     }
   }, [lightroomPreviewUrl])
 
+  // 参考图和目标图走同一套逻辑：RAW 交给后端转 JPEG 预览，普通图片本地直接建 objectURL。
+  useEffect(() => {
+    let cancelled = false
+    let objectUrl: string | undefined
+    if (!referencePhoto) {
+      setReferencePreviewUrl(undefined)
+      setReferenceLoading(false)
+      return () => { cancelled = true }
+    }
+    const selected = referencePhoto
+    const raw = isRawPhoto(selected.name)
+    setReferencePreviewUrl(undefined)
+    setReferenceLoading(raw)
+
+    async function loadReferencePreview() {
+      try {
+        let image: Blob = selected
+        if (raw) {
+          const body = new FormData()
+          body.append('photo', selected)
+          const response = await fetch(`${API}/api/images/preview`, { method: 'POST', body })
+          if (!response.ok) {
+            const data = await response.json()
+            throw new Error(data.detail || '无法生成参考图预览。')
+          }
+          image = await response.blob()
+        }
+        const url = URL.createObjectURL(image)
+        if (cancelled) {
+          URL.revokeObjectURL(url)
+          return
+        }
+        objectUrl = url
+        setReferencePreviewUrl(url)
+      } catch (cause) {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : '无法读取这张参考图。')
+      } finally {
+        if (!cancelled) setReferenceLoading(false)
+      }
+    }
+
+    void loadReferencePreview()
+    return () => {
+      cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [referencePhoto])
+
   function selectPhoto(file: File | undefined) {
     setPhoto(file ?? null)
     setSuggestion(undefined)
     setLightroomPreviewUrl(undefined)
     setPreviewMode('original')
+    setError('')
+  }
+
+  function selectReference(file: File | undefined) {
+    setReferencePhoto(file ?? null)
+    setSuggestion(undefined)
+    setLightroomPreviewUrl(undefined)
+    setPreviewMode('original')
+    setError('')
+  }
+
+  // 切到“文字方向”时清掉参考图，避免离开参考图模式后仍把旧图发给模型。
+  function switchInputMode(mode: 'prompt' | 'reference') {
+    setInputMode(mode)
+    if (mode === 'prompt') setReferencePhoto(null)
     setError('')
   }
 
@@ -671,6 +739,10 @@ export default function App() {
       setError('先选择一张照片，再生成调色建议。')
       return
     }
+    if (inputMode === 'reference' && !referencePhoto) {
+      setError('参考图模式需要先上传一张参考图，或切回文字方向模式。')
+      return
+    }
     const allowed = Object.entries(allowedKeys)
       .filter(([, value]) => value)
       .map(([key]) => key)
@@ -683,6 +755,7 @@ export default function App() {
     const body = new FormData()
     body.append('photo', photo)
     body.append('prompt', prompt)
+    if (inputMode === 'reference' && referencePhoto) body.append('reference', referencePhoto)
     if (registry) body.append('allowed_keys', JSON.stringify(allowed))
     try {
       const response = await fetch(`${API}/api/suggestions`, { method: 'POST', body })
@@ -1049,14 +1122,46 @@ export default function App() {
               </div>
             </div>
             <div className="prompt-block">
+              <div className="input-mode-switch" role="group" aria-label="调色输入方式">
+                <button
+                  className={inputMode === 'prompt' ? 'selected' : ''}
+                  onClick={() => switchInputMode('prompt')}
+                  title="只用文字描述想要的调色方向"
+                ><Sparkles size={12} />文字方向</button>
+                <button
+                  className={inputMode === 'reference' ? 'selected' : ''}
+                  onClick={() => switchInputMode('reference')}
+                  title="再上传一张参考图，让模型借用它的调色风格"
+                ><ImagePlus size={12} />参考图</button>
+              </div>
               <label htmlFor="creative-brief">告诉 AI 你想要的感觉</label>
-              <textarea id="creative-brief" value={prompt} onChange={(event) => setPrompt(event.target.value)} maxLength={PROMPT_MAX_LENGTH} placeholder="例如：胶片感的暖调人像，肤色自然……" />
+              <textarea id="creative-brief" value={prompt} onChange={(event) => setPrompt(event.target.value)} maxLength={PROMPT_MAX_LENGTH} placeholder={inputMode === 'reference' ? '例如：照着参考图的色调，让目标图也有那种暖调胶片感……' : '例如：胶片感的暖调人像，肤色自然……'} />
               <div className="prompt-meta">
                 <span className={presetNotice ? 'is-notice' : ''}>{presetNotice || '建议具体描述氛围、主体和需要保留的细节'}</span>
                 <span>{prompt.length}/{PROMPT_MAX_LENGTH}</span>
               </div>
             </div>
-            <button className="generate-button" onClick={generate} disabled={busy || previewLoading || !health?.model_active}>
+            {inputMode === 'reference' && (
+              <div className="reference-block">
+                {referencePreviewUrl || referenceLoading ? (
+                  <div className="reference-preview">
+                    {referenceLoading
+                      ? <div className="reference-loading"><span className="spinner" /><span>正在解码参考图…</span></div>
+                      : <img src={referencePreviewUrl} alt="参考图预览" />}
+                    <label className="reference-replace" title="替换参考图"><Upload size={13} /><input type="file" accept={PHOTO_ACCEPT} onChange={(event) => selectReference(event.target.files?.[0])} /></label>
+                    <button className="reference-remove" onClick={() => selectReference(undefined)} title="移除参考图" aria-label="移除参考图"><X size={13} /></button>
+                  </div>
+                ) : (
+                  <label className="reference-prompt">
+                    <input type="file" accept={PHOTO_ACCEPT} onChange={(event) => selectReference(event.target.files?.[0])} />
+                    <span className="reference-icon"><ImagePlus size={16} /></span>
+                    <span className="reference-copy"><strong>上传参考图</strong><small>AI 分析它的调色风格，应用到左边的目标图</small></span>
+                  </label>
+                )}
+                <p className="reference-hint">参考图只提供色调与氛围，不会照搬内容；生成建议时会连同目标图一起发给模型。</p>
+              </div>
+            )}
+            <button className="generate-button" onClick={generate} disabled={busy || previewLoading || referenceLoading || !health?.model_active}>
               {busy || previewLoading ? <span className="spinner" /> : <Sparkles size={17} />}
               {previewLoading ? '正在准备 RAW…' : busy ? '正在分析照片…' : health?.model_active ? '生成调色方案' : '先启动模型'}
               {!busy && !previewLoading && <span className="button-shortcut">↵</span>}

@@ -58,6 +58,22 @@ REFERENCE_PARAMS_RULE = (
     "wins if the two ever disagree."
 )
 
+# Appended when the request carries a reference photo (the web UI "参考图" input mode): the
+# target photo stays the photo being graded, and the reference only supplies the look. The
+# rule spells out both halves of that split - read the reference for style, grade the target -
+# so the model neither copies the reference's content nor ignores the look it was handed.
+REFERENCE_IMAGE_RULE = (
+    "You are given two photos in this turn: the first is the TARGET photo to be graded, the "
+    "second is a REFERENCE photo whose colour and mood the photographer wants to borrow. Read "
+    "the reference for its look only - overall warmth or coolness, contrast and black point, "
+    "shadow and highlight tint, which hues are pushed or held back, saturation, grain or a "
+    "matte finish - and describe that look in summary. Never copy the reference's subject, "
+    "framing or content onto the target: a bright sky reference does not mean every photo gets "
+    "a bright sky. Make the target look as if the reference's grade had been applied to it, "
+    "keeping the target's own subject believable, and when the brief and the reference seem to "
+    "ask for different looks, follow the brief and say so in summary."
+)
+
 # Only appended when the request unlocked the mask (the web UI mask switch): the Post Crop
 # vignette is the one effect that can draw a shape the eye reads as a region of the photo,
 # so the model is told the window that keeps it soft instead of a circle.
@@ -147,7 +163,9 @@ def _trigger_for(key: str) -> str:
 
 
 def _build_system_prompt(
-    keys: Iterable[str] | None = None, reference_params: bool = False
+    keys: Iterable[str] | None = None,
+    reference_params: bool = False,
+    reference_image: bool = False,
 ) -> str:
     """Prompt for one request; it only mentions the keys the caller allowed.
 
@@ -158,6 +176,8 @@ def _build_system_prompt(
     the group worth using, because a flat list of them was ignored in practice.
     reference_params is on when the brief carries a preset's 「参考参数」 block, so the
     model learns how to weigh those suggested ranges before it reads them.
+    reference_image is on when the request also carries a second (reference) photo, so
+    the model knows to read its look without copying its content.
     """
     allowed = model_keys_for(keys)
     allowed_set = set(allowed)
@@ -184,6 +204,9 @@ def _build_system_prompt(
             "- instead of stopping at one or two sliders."
         )
     sections = [SYSTEM_PROMPT_HEAD, scope]
+    if reference_image:
+        # A reference photo came with the request, so say how to use it before the key lists.
+        sections.append(REFERENCE_IMAGE_RULE)
     if reference_params:
         # A preset filled the brief, so say how to weigh its suggested ranges before the model
         # reads them: not mandatory, judged against the photo, and not to be dropped either.
@@ -336,17 +359,30 @@ def _raise_for_model_response(response: httpx.Response, provider: str) -> None:
 
 
 def _user_message(
-    provider: str, text: str, encoded_image: str | None, mime_type: str
+    provider: str, text: str, encoded_images: list[str] | None, mime_types: list[str] | str
 ) -> dict[str, Any]:
-    """One user turn; Ollama carries images inside the message, OpenAI uses parts."""
+    """One user turn; Ollama carries images inside the message, OpenAI uses parts.
+
+    ``encoded_images`` is an ordered list so a reference photo can ride along with the
+    target: the order (target first, reference second) is what the reference-image rule
+    in the system prompt refers to. ``mime_types`` matches the list positionally, but a
+    single string is accepted for the common one-image case.
+    """
+    images = encoded_images or []
+    if isinstance(mime_types, str):
+        types = [mime_types] * len(images)
+    else:
+        types = list(mime_types)
+
     if provider == "ollama":
         message: dict[str, Any] = {"role": "user", "content": text}
-        if encoded_image:
-            message["images"] = [encoded_image]
+        if images:
+            message["images"] = list(images)
         return message
 
     content: list[dict[str, Any]] = [{"type": "text", "text": text}]
-    if encoded_image:
+    for index, encoded_image in enumerate(images):
+        mime_type = types[index] if index < len(types) else types[-1]
         content.append(
             {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{encoded_image}"}}
         )
@@ -463,6 +499,8 @@ async def generate_suggestion(
     image: bytes,
     mime_type: str,
     allowed_keys: Iterable[str] | None = None,
+    reference_image: bytes | None = None,
+    reference_mime_type: str | None = None,
 ) -> dict[str, Any]:
     """One suggestion, repaired at most MAX_PARAMETER_REPAIR_ROUNDS times.
 
@@ -477,15 +515,36 @@ async def generate_suggestion(
     render as a hard-edged circle (see VIGNETTE_SAFE_WINDOW in settings.py) are sent
     back as well, and tame_vignette_artifacts() clamps whatever survives, so the photo
     can never end up with a circular artifact that looks like a mask.
+
+    When ``reference_image`` is given it is sent after the target photo and the system
+    prompt gains the reference-image rule, so the model borrows the reference's look
+    without copying its content.
     """
     model_config = load_model_config()
     keys = model_keys_for(allowed_keys)
     if not keys:
         raise RuntimeError("请至少允许一个调色参数参与 AI 调整")
-    system_prompt = _build_system_prompt(keys, reference_params=PARAMS_HINT_LABEL in prompt)
-    encoded_image = base64.b64encode(image).decode("ascii")
-    user_text = f"User direction: {prompt.strip() or 'Create a balanced natural edit.'}"
-    messages = [_user_message(model_config.provider, user_text, encoded_image, mime_type)]
+    has_reference = reference_image is not None
+    system_prompt = _build_system_prompt(
+        keys,
+        reference_params=PARAMS_HINT_LABEL in prompt,
+        reference_image=has_reference,
+    )
+    images = [base64.b64encode(image).decode("ascii")]
+    mime_types = [mime_type]
+    if reference_image is not None:
+        images.append(base64.b64encode(reference_image).decode("ascii"))
+        mime_types.append(reference_mime_type or mime_type)
+    if has_reference:
+        # Name the two photos so the model cannot mix up which one it is grading.
+        user_text = (
+            f"User direction: {prompt.strip() or 'Create a balanced natural edit.'}\n"
+            "The first image is the target photo to grade; the second image is the reference "
+            "photo whose colour and mood to borrow."
+        )
+    else:
+        user_text = f"User direction: {prompt.strip() or 'Create a balanced natural edit.'}"
+    messages = [_user_message(model_config.provider, user_text, images, mime_types)]
 
     attempts = 0
     repair_rounds = 0

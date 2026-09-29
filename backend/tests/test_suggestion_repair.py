@@ -1,3 +1,4 @@
+import base64
 import sys
 import unittest
 from contextlib import contextmanager
@@ -127,6 +128,55 @@ class SuggestionOverflowRepairTests(unittest.IsolatedAsyncioTestCase):
         body = client.requests[0]
         self.assertEqual(body["messages"][1]["content"], "User direction: 自然通透")
         self.assertNotIn("reference parameters", body["messages"][0]["content"])
+
+    async def test_reference_photo_is_sent_after_the_target_with_its_rule(self) -> None:
+        """参考图模式：目标图在前、参考图在后，并附上「读风格、不照搬内容」的规则。"""
+        with scripted_model([LEGAL_ANSWER]) as client:
+            await generate_suggestion(
+                "照着参考图的色调",
+                b"target-bytes",
+                "image/jpeg",
+                reference_image=b"reference-bytes",
+                reference_mime_type="image/png",
+            )
+
+        body = client.requests[0]
+        system = body["messages"][0]["content"]
+        user = body["messages"][1]
+        # Ollama carries the images inside the message, target first then reference.
+        self.assertEqual(len(user["images"]), 2)
+        self.assertEqual(user["images"][0], base64.b64encode(b"target-bytes").decode("ascii"))
+        self.assertEqual(user["images"][1], base64.b64encode(b"reference-bytes").decode("ascii"))
+        self.assertIn("the first is the TARGET photo", system)
+        self.assertIn("Never copy the reference's subject", system)
+        self.assertIn("the second image is the reference", user["content"])
+
+    async def test_reference_photo_uses_its_own_mime_type_on_the_cloud_path(self) -> None:
+        """云端 provider 用 image_url：目标图与参考图各自带上自己的 MIME 类型。"""
+        with scripted_model([LEGAL_ANSWER], "openai") as client:
+            await generate_suggestion(
+                "照着参考图的色调",
+                b"target-bytes",
+                "image/jpeg",
+                reference_image=b"reference-bytes",
+                reference_mime_type="image/png",
+            )
+
+        content = client.requests[0]["messages"][1]["content"]
+        image_parts = [part for part in content if part["type"] == "image_url"]
+        self.assertEqual(len(image_parts), 2)
+        self.assertTrue(image_parts[0]["image_url"]["url"].startswith("data:image/jpeg;base64,"))
+        self.assertTrue(image_parts[1]["image_url"]["url"].startswith("data:image/png;base64,"))
+
+    async def test_without_a_reference_photo_the_rule_stays_absent(self) -> None:
+        """没上传参考图时只发一张目标图，提示里也不会出现参考图规则。"""
+        with scripted_model([LEGAL_ANSWER]) as client:
+            await generate_suggestion("自然通透", b"target-bytes", "image/jpeg")
+
+        body = client.requests[0]
+        self.assertEqual(len(body["messages"][1]["images"]), 1)
+        self.assertNotIn("REFERENCE photo", body["messages"][0]["content"])
+        self.assertNotIn("the second image", body["messages"][1]["content"])
 
     async def test_legal_answer_is_returned_without_a_repair_round(self) -> None:
         with scripted_model([LEGAL_ANSWER]) as client:

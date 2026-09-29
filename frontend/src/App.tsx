@@ -34,7 +34,7 @@ type OverflowReport = {
   notice: string
 }
 type Suggestion = { summary: string; settings: Record<string, SettingValue>; overflow?: OverflowReport }
-type Health = { status: string; provider: 'ollama' | 'openai'; model: string; model_active: boolean; model_message: string; lightroom: string }
+type Health = { status: string; provider: 'ollama' | 'openai'; model: string; model_active: boolean; model_message: string; lightroom: string; max_image_mb: number; max_raw_image_mb: number }
 type ModelConfiguration = {
   provider: 'ollama' | 'openai'
   model_name: string
@@ -1096,7 +1096,8 @@ export default function App() {
                   <span className="upload-icon"><ImagePlus size={22} /></span>
                   <strong>把照片放进画布</strong>
                   <span>选择照片或相机 RAW 开始调色</span>
-                  <small>JPG / PNG ≤12 MB · RAW ≤100 MB</small>
+                  {/* 上限来自后端 /api/health，改 .env 的 AILR_MAX_*_MB 后这里自动跟着变。 */}
+                  <small>JPG / PNG ≤{health?.max_image_mb ?? 12} MB · RAW ≤{health?.max_raw_image_mb ?? 100} MB</small>
                 </label>
               )}
               <div className="stage-corner corner-tl" /><div className="stage-corner corner-br" />

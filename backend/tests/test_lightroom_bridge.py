@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.main import app
-from app.services.lightroom_bridge import lightroom_bridge
+from app.services.lightroom_bridge import MAX_ACTIVE_JOBS, lightroom_bridge
 
 
 class LightroomBridgeApiTests(unittest.TestCase):
@@ -187,6 +187,56 @@ class LightroomBridgeApiTests(unittest.TestCase):
         self.client.post("/api/lightroom/heartbeat", content="DSC_1001.NEF")
         response = self.client.post("/api/lightroom/jobs", json={"action": "preview", "settings": {}})
         self.assertEqual(response.status_code, 422)
+
+    def test_stale_processing_job_fails_instead_of_polling_forever(self) -> None:
+        """插件领取后不回传：任务被判成超时失败，而不是永远停在 processing。"""
+        self.client.post("/api/lightroom/heartbeat", content="DSC_1001.NEF")
+        created = self.client.post(
+            "/api/lightroom/jobs",
+            json={"action": "preview", "settings": {"Exposure2012": 0.2}},
+        )
+        job_id = created.json()["job_id"]
+        self.client.get("/api/lightroom/jobs/next")
+
+        # 把领取时间挪到很久以前，等价于插件领走任务后再也没有回应。
+        lightroom_bridge._jobs[job_id].started_at = 1.0
+
+        status = self.client.get(f"/api/lightroom/jobs/{job_id}").json()
+        self.assertEqual(status["status"], "failed")
+        self.assertIn("超时", status["error"])
+
+    def test_finished_jobs_are_reclaimed_after_the_retention_window(self) -> None:
+        """已完成的任务在保留窗口后从任务表移除，长会话不会累积任务与图片内存。"""
+        self.client.post("/api/lightroom/heartbeat", content="DSC_1001.NEF")
+        created = self.client.post(
+            "/api/lightroom/jobs",
+            json={"action": "preview", "settings": {"Exposure2012": 0.2}},
+        )
+        job_id = created.json()["job_id"]
+        self.client.get("/api/lightroom/jobs/next")
+        self.client.post(
+            f"/api/lightroom/jobs/{job_id}/result",
+            content=b"rendered-jpeg",
+            headers={"Content-Type": "image/jpeg", "X-aiLr-Filename": "DSC_1001.jpg"},
+        )
+        self.assertIn(job_id, lightroom_bridge._jobs)
+
+        lightroom_bridge._jobs[job_id].finished_at = 1.0
+
+        # 任何一次读取都会顺手回收：再问这个任务只剩 404。
+        self.assertEqual(self.client.get(f"/api/lightroom/jobs/{job_id}").status_code, 404)
+        self.assertNotIn(job_id, lightroom_bridge._jobs)
+
+    def test_active_job_cap_counts_claimed_jobs_too(self) -> None:
+        """上限按「排队中 + 执行中」合计，插件领走任务后不能继续无限排入。"""
+        self.client.post("/api/lightroom/heartbeat", content="DSC_1001.NEF")
+        payload = {"action": "preview", "settings": {"Exposure2012": 0.2}}
+        for _ in range(MAX_ACTIVE_JOBS):
+            self.assertEqual(self.client.post("/api/lightroom/jobs", json=payload).status_code, 200)
+
+        # 领走一个：队列变短了，但它仍然占着「执行中」的额度。
+        self.assertEqual(self.client.get("/api/lightroom/jobs/next").status_code, 200)
+        self.assertEqual(self.client.post("/api/lightroom/jobs", json=payload).status_code, 409)
 
 
 if __name__ == "__main__":

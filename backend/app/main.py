@@ -167,6 +167,10 @@ async def get_lightroom_image(job_id: str, download: bool = False) -> Response:
             raise HTTPException(status_code=404, detail="找不到 Lightroom 渲染任务")
         if job.status == "completed":
             raise HTTPException(status_code=410, detail="此 Lightroom 图片已下载并从缓存释放")
+        if job.status == "failed":
+            # A render that timed out or was rejected has no image; report why instead
+            # of claiming it is still running.
+            raise HTTPException(status_code=409, detail=job.error or "Lightroom 渲染失败")
         raise HTTPException(status_code=409, detail="Lightroom 渲染尚未完成")
     job, image = result
     disposition = "attachment" if download else "inline"
@@ -201,15 +205,26 @@ async def read_photo_upload(photo: UploadFile) -> tuple[bytes, str, bool]:
 
 
 @app.get("/api/health")
-def health() -> dict[str, str | bool]:
+def health() -> dict[str, object]:
     model_config = load_model_config()
+    bridge = lightroom_bridge.status()
+    # The bridge state is reported from its heartbeat, not guessed: the web UI uses
+    # /api/lightroom/status for the same numbers, and this keeps the two in step.
+    if bridge["connected"]:
+        lightroom = f"plugin connected · {bridge['selected_filename'] or '未选中照片'}"
+    else:
+        lightroom = "plugin bridge not connected"
     return {
         "status": "ok",
         "provider": model_config.provider,
         "model": model_config.model_name,
         "model_active": runtime.active,
         "model_message": runtime.message,
-        "lightroom": "plugin bridge not connected",
+        "lightroom": lightroom,
+        # Upload caps come from .env (AILR_MAX_IMAGE_MB / AILR_MAX_RAW_IMAGE_MB) so the
+        # web UI can print the limits the backend actually enforces.
+        "max_image_mb": settings.max_image_mb,
+        "max_raw_image_mb": settings.max_raw_image_mb,
     }
 
 
@@ -429,9 +444,13 @@ async def suggest(
         raise HTTPException(status_code=400, detail=str(error)) from error
 
     # 参考图模式：把用户上传的第二张图作为"参考风格"，只借用它的调色氛围，不照搬内容。
-    reference_upload: tuple[bytes, str, bool] | None = None
+    # The upload is stored together with its own file object, so the code below never has
+    # to reach back through the optional `reference` parameter to read its filename.
+    reference_upload: tuple[UploadFile, bytes, str, bool] | None = None
     if reference is not None and (reference.filename or ""):
-        reference_upload = await read_photo_upload(reference)
+        reference_file = reference
+        ref_data, ref_type, ref_is_raw = await read_photo_upload(reference_file)
+        reference_upload = (reference_file, ref_data, ref_type, ref_is_raw)
 
     try:
         image, mime_type = prepare_image_for_model(
@@ -441,10 +460,10 @@ async def suggest(
         )
         reference_image = reference_mime_type = None
         if reference_upload is not None:
-            ref_data, ref_type, ref_is_raw = reference_upload
+            reference_file, ref_data, ref_type, ref_is_raw = reference_upload
             reference_image, reference_mime_type = prepare_image_for_model(
                 ref_data,
-                reference.filename if ref_is_raw else None,
+                reference_file.filename if ref_is_raw else None,
                 ref_type,
             )
         result = await generate_suggestion(

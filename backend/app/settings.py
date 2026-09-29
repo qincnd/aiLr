@@ -110,8 +110,9 @@ def _slider(
     controller: str = "",
     core: bool = False,
     experimental: bool = False,
-    description: str = "",
 ) -> DevelopControl:
+    # Sliders carry no description: the numeric ones are self-explanatory in the web UI,
+    # so the few controls that need an explanation use DevelopControl directly.
     return DevelopControl(
         key=key,
         label=label,
@@ -123,7 +124,6 @@ def _slider(
         default=default,
         core=core,
         experimental=experimental,
-        description=description,
     )
 
 

@@ -200,6 +200,8 @@ stdio 是机器协议通道，MCP 服务不要向 stdout 输出普通日志。
 
 LrC 的 Develop 参数会写入当前选中照片并产生可撤销的历史记录；预览不是临时模拟。Lightroom 插件通过轮询 `127.0.0.1:8000` 的本地任务 API 工作，未连接插件或文件名不匹配时，网页会阻止渲染。当前执行环境未安装 Lightroom Classic，真实宿主内的插件渲染仍需在安装 LrC 的机器上完成验收。
 
+渲染任务带超时与回收：插件领取任务后 900 秒内没有回传结果（`backend/app/services/lightroom_bridge.py` 的 `JOB_PROCESSING_TIMEOUT_SECONDS`），后端会把该任务标成失败并写明原因，网页立刻看到失败而不是继续等待自己的轮询超时；已完成或已失败的任务连同渲染结果在 900 秒后从任务表回收（`JOB_RETENTION_SECONDS`），队列上限按「排队中 + 执行中」合计 `MAX_ACTIVE_JOBS`（20）计算。网页上传提示里的「JPG / PNG ≤12 MB · RAW ≤100 MB」不再写死，而是读 `GET /api/health` 的 `max_image_mb` / `max_raw_image_mb`（即 `.env` 的 `AILR_MAX_IMAGE_MB` / `AILR_MAX_RAW_IMAGE_MB`）。
+
 ## 测试
 
 ```powershell

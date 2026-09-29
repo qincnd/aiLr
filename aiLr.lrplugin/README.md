@@ -29,6 +29,8 @@
 
 插件每 1.5 秒向 `/api/lightroom/heartbeat` 上报选中照片文件名，并从 `/api/lightroom/jobs/next` 领取任务。任务前 5 行固定为 `任务号 / 动作 / 格式 / 质量 / 最长边`，其后每行一个 `键=值`：数值保持原样（`Temperature=5600`、`Exposure2012=0.35`），布尔为 `true`/`false`，枚举与点曲线用百分号编码（`ToneCurveName=Medium%20Contrast`、`ToneCurvePV2012=0%2C0%3B255%2C255`）。输出二进制图像回传到 `/api/lightroom/jobs/{id}/result`，插件报告回传到 `/api/lightroom/jobs/{id}/report`；网页轮询任务状态后显示预览或下载文件。
 
+任务被领取（`status=processing`）后若在 900 秒（`JOB_PROCESSING_TIMEOUT_SECONDS`）内没有回传到 `/result` 或 `/failed`，后端会把它标成 `failed` 并写明原因，网页立刻看到失败提示，不会一直等到自己的轮询超时；已完成或已失败的任务连同渲染结果在 900 秒（`JOB_RETENTION_SECONDS`）后从任务表回收，队列上限则按「排队中 + 执行中」合计 20 个（`MAX_ACTIVE_JOBS`）计算。
+
 任务参数在 FastAPI 端按 `backend/app/settings.py` 的注册表再次校验（键名白名单 + 数值范围 + 枚举取值 + 曲线控制点）。插件只接受白名单内的 Develop 参数和 JPEG、PNG、TIFF 格式。桥接 API 仅供本机工作流使用；不要将 FastAPI 绑定到公网。
 
 ## 支持的 Develop 参数
@@ -37,7 +39,7 @@
 - 值分四类：`number`（数值）、`bool`（`AutoTone`、`AutoLateralCA`、`LensProfileEnable`、`ConvertToGrayscale`）、`string`（枚举：`WhiteBalance`、`ToneCurveName`、`PostCropVignetteStyle`、`PerspectiveUpright`）、`curve`（`ToneCurvePV2012` 及红/绿/蓝三个通道曲线，格式 `x,y;x,y`，插件还原为 `{x, y}` 点表后交给宿主）。
 - 分组覆盖：基本（含黑白转换）、白平衡、色调曲线（点曲线 + 参数曲线）、混色器 HSL（8 色 × 色相/饱和度/明亮度）、颜色分级、分离色调、细节（锐化与减少杂色）、效果（裁剪后暗角、颗粒）、镜头校正、变换、其它。
 - 镜头校正与变换共 19 项与 LrC 版本和镜头配置文件强相关，注册表里标记为 `experimental`：默认不允许大模型调整（不会进入当次请求的 JSON Schema），需要时可在网页面板里手动打开开关为该次请求解锁，或用行末的 `＋` 直接把参数加入本次渲染；被拒时只跳过该项。
-- 参数表在 `backend/app/settings.py` 生成（`develop_controls_payload()` 同时驱动网页与 MCP）：`MODEL_SETTING_KEYS` 是默认允许模型调整的集合（除 `experimental` 外的全部 88 项，数值 / 枚举 / 开关 / 点曲线都在内），网页可用 `POST /api/suggestions` 的 `allowed_keys` 字段按次裁剪；改动后需要同步 `Bridge.lua` 的 `SETTING_KEYS`，两端键名不一致时，插件会把未知键记入报告而不是直接报错。
+- 参数表在 `backend/app/settings.py` 生成（`develop_controls_payload()` 同时驱动网页与 MCP）：`MODEL_SETTING_KEYS` 是默认允许模型调整的集合（全部 107 项里减掉 19 项 `experimental` 与 5 项蒙版（裁剪后暗角）= 83 项，数值 / 枚举 / 开关 / 点曲线都在内），网页可用 `POST /api/suggestions` 的 `allowed_keys` 字段按次裁剪；改动后需要同步 `Bridge.lua` 的 `SETTING_KEYS`，两端键名不一致时，插件会把未知键记入报告而不是直接报错。
 
 ## 参数被宿主拒绝时
 

@@ -6,8 +6,13 @@ from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+# backend/app/config.py -> parents[2] is the project root, so .env is found no matter
+# which directory uvicorn (or the MCP server) was started from.
+ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
+
+
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_prefix="AILR_", extra="ignore")
+    model_config = SettingsConfigDict(env_file=ENV_FILE, env_prefix="AILR_", extra="ignore")
 
     model_provider: Literal["ollama", "openai"] = "ollama"
     model_name: str = "qwen2.5vl:7b"

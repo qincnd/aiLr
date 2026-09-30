@@ -23,7 +23,7 @@
 - Python 3.11 或更高版本
 - Node.js 20 或更高版本（含 npm）
 - 本地运行需要安装 Ollama 并下载视觉模型；或配置兼容视觉输入的云端 API
-- RAW 解码使用 LibRaw（通过 `rawpy`），实际机型支持取决于 LibRaw
+- RAW 解码使用 LibRaw（通过 `rawpy`），实际机型支持取决于 LibRaw(一键式脚本会自动哦欸之该环境)
 
 ## 一键脚本（推荐）
 
@@ -150,6 +150,7 @@ ollama pull qwen2.5vl:7b
 ## RAW 图片
 
 网页文件选择器支持常见的 DNG、CR2/CR3、NEF/NRW、ARW、RAF、ORF、RW2、PEF 等 RAW 扩展名。后端使用 rawpy/LibRaw 按相机白平衡解码，并生成最长边不超过 2048px 的 JPEG 预览供网页显示和模型分析；原始文件不会被改写。普通图片上传上限为 12 MB，RAW 默认上限为 100 MB，可通过 `.env` 中的 `AILR_MAX_IMAGE_MB` 与 `AILR_MAX_RAW_IMAGE_MB` 调整。RAW 是否能解码仍取决于 LibRaw 对具体相机型号和文件版本的支持。
+例如NIKON 索尼 哈苏等格式均支持，小米旗舰手机和iPhone等手机厂商拍摄的raw格式的图片也支持(未测试)
 
 ## 启动开发服务
 
@@ -177,6 +178,7 @@ AILR_OPENAI_API_KEY=你的密钥
 ```
 
 也可以使用前端页面完成对云端大模型的配置，最后会将配置文件保存在backend/data/model_config.json 中
+如果需要对该项目修改，注意不要将api直接上传
 
 
 

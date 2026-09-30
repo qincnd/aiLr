@@ -92,7 +92,7 @@
       <div class="hero-meta">
         <span class="chip">Windows 10/11</span>
         <span class="chip">Python 3.11+ · Node 20+</span>
-        <span class="chip">后端 8000 · 前端 5173</span>
+        <span class="chip">port 后端 8000 · 前端 5173</span>
         <span class="chip">LrC 插件 Bridge 2026.09.28.1 · 107 项 Develop 参数</span>
       </div>
     </div>
@@ -100,6 +100,7 @@
     <div class="layout">
       <nav class="toc" aria-label="目录">
         <strong>目录</strong>
+        <a href="#after">00 前言</a>
         <a href="#about">01 能做什么</a>
         <a href="#quickstart">02 三步上手</a>
         <a href="#prepare">03 环境准备</a>
@@ -114,6 +115,22 @@
       </nav>
 
       <main class="content">
+        <section class="card" id="after">
+          <h2><span class="step-no">00</span>前言</h2>
+          <p>本软件部分代码使用ai生成
+            <br>
+            目前由于没有看到一个令我比较满意的ai调色工具，于是选择拉上大肥鱼(deepseek)干一票。
+            <br>
+            推荐使用raw格式，小米旗舰 iphone（非相机设备）等均可拍摄raw格式图片，请检查网络查询自己的移动设备是否支持 raw格式的图片
+            <br>
+            非raw格式的图片也支持(如jpg,png等，不支持gif)
+          </p>
+          <pre><code>原理与设计
+          → 通过前端获取用户上传的网页和用户所写提示词→ 发送到python后端→ 判断图片格式，raw格式会先转化为jpg格式后发送大模型→ 大模型读取并给出调色参数(json)→ 生成参数→ <br>
+          连接LcR插件→ 检查打开图片是否为同一张→ 应用参数→ 执行并渲染→ 前端预览→ 可以下载</code></pre>
+        </section>
+
+      <main class="content">
         <section class="card" id="about">
           <h2><span class="step-no">01</span>能做什么 / 不能做什么</h2>
           <p>aiLr 是一套「网页 + Python 后端 + Lightroom Classic 插件」的本地调色工作台，链路是：</p>
@@ -122,7 +139,7 @@
       → LrC 真正渲染 → 回传网页预览，或按选项导出下载</code></pre>
           <h3>能做到</h3>
           <ul>
-            <li>支持常见 RAW（DNG、CR2/CR3、NEF/NRW、ARW、RAF、ORF、RW2、PEF 等），解码后只用预览做分析，原片不改写。</li>
+            <li>支持常见 RAW（DNG、CR2/CR3、NEF/NRW、ARW、RAF、ORF、RW2、PEF 等，也就是说常见的raw格式基本都支持吧，应该吧），解码后只用预览做分析，原片不改写。</li>
             <li>网页「全部 LrC 调色参数」面板把 107 项 Develop 参数按 LrC 面板分组列出：左侧开关表示「是否允许大模型调整该参数」，默认除 19 项实验参数外全部打开；行末的 <code>＋</code> 可把该参数以当前值手工加入本次渲染，不必依赖 AI 建议，拖动滑块或下拉选择即可微调。</li>
             <li>「应用到 LrC 并预览」拿到 <strong>Lightroom 真实渲染结果</strong>（2560px JPEG），而不是网页伪造效果。</li>
             <li>「LrC 渲染并下载」按 JPEG / PNG / TIFF、JPEG 质量与最长边导出成品；「导出调色参数 .JSON」保存参数快照。</li>
@@ -203,7 +220,8 @@ npm --prefix frontend run dev</code></pre>
           <p>网页入口 <code>http://127.0.0.1:5173</code>，后端健康检查 <code>http://127.0.0.1:8000/api/health</code>。若 PowerShell 不让激活虚拟环境，可直接用 <code>.\.venv\Scripts\python.exe -m ...</code>。</p>
           <h3>本地模型权重</h3>
           <pre><code>ollama pull qwen2.5vl:7b</code></pre>
-          <p>默认模型 <code>qwen2.5vl:7b</code>，推理上下文 8192 tokens（比 Ollama 常见的 4096 更吃内存）。启动 aiLr 不会自动加载模型，只有模型设置里的「保存并启动」才会加载。</p>
+          <p>默认模型 <code>qwen2.5vl:7b</code>，推理上下文 8192 tokens（比 Ollama 常见的 4096 更吃内存）。启动 aiLr 不会自动加载模型，只有模型设置里的「保存并启动」才会加载。<br>经过测试，qwen在本地的运行效果比较具有性价比，测试机型是华硕天选3 3060 6G显存16G内存，目前测试过千问和llava两个本地大模型，云端大模型目前只测试过deepseek-flash，注意deepseek-flash才支持识别图像。<br>
+          </p>
         </section>
 
         <section class="card" id="model">
@@ -226,7 +244,7 @@ npm --prefix frontend run dev</code></pre>
           <h2><span class="step-no">06</span>网页调色流程</h2>
           <ol class="steps">
             <li><strong>选照片</strong>：把照片拖进画布或点选文件。普通图片上限 12 MB，RAW 上限 100 MB（可用 <code>.env</code> 里的 <code>AILR_MAX_IMAGE_MB</code> / <code>AILR_MAX_RAW_IMAGE_MB</code> 调整）。RAW 由后端按相机白平衡解码，并生成最长边 ≤ 2048px 的 JPEG 供网页显示和模型分析，<strong>原片不会被改写</strong>。</li>
-            <li><strong>写调色意图</strong>：例如「自然通透，保留天空层次，绿色不要过饱和」。可以写具体描述，也可以留空让模型自行判断；不选预设时输入框就是一段自由文本，和以前一样。面板右上角的「调色预设」会从右侧滑出抽屉，默认带 12 个中文调色方向（胶片暖调人像、自然通透风光、日系清新、电影感青橙、黑白纪实、复古暖褐、冷调高级灰、暗调情绪、霓虹夜景、美食暖调、宠物柔亮、街头硬调）；点卡片即把该方向的调色步骤、约束与参考参数合成的一段创作说明填入输入框并关闭抽屉，之后仍可继续改写，按 Esc、点遮罩或点右上角 <code>×</code> 也能关闭。当前输入与某个预设完全一致时，卡片会标注「已填入」。参考参数（整体强度与各滑块的建议区间）只是建议：后端会在系统提示里说明它不是强制规范，AI 按画面实际判断，但也不会整段忽略。抽屉右上角的<strong>「新建预设」</strong>可以就地写一个自己的方向（名称 / 分类 / 一句话描述 / 提示词 / <strong>参数参考</strong>：一行一个参数，参数名 + 建议区间，整块可留空；提示词默认用当前创作说明预填）。填了参数参考就保存成 <code>text</code> + <code>params_hint</code> 对象，留空则仍是一段纯文本字符串；参数名与建议怎么写见第 08 节的「参数参考」小节（表单里也放了一处直达链接）。保存后立刻写进项目根目录的 <code>color_presets.json</code> 并排到列表末尾；每张卡片右下角的「删除」需要两步确认。这个 JSON 也可以用文本编辑器直接改（<code>id</code> 可省略、<code>created_at</code> 由网页新建时自动写入），改完刷新网页即可生效。</li>
+            <li><strong>写调色意图</strong>：(告诉ai你想调什么) 例如「自然通透，保留天空层次，绿色不要过饱和」。可以写具体描述，也可以留空让模型自行判断；不选预设时输入框就是一段自由文本，和以前一样。面板右上角的「调色预设」会从右侧滑出抽屉，默认带 12 个中文调色方向（胶片暖调人像、自然通透风光、日系清新、电影感青橙、黑白纪实、复古暖褐、冷调高级灰、暗调情绪、霓虹夜景、美食暖调、宠物柔亮、街头硬调）；点卡片即把该方向的调色步骤、约束与参考参数合成的一段创作说明填入输入框并关闭抽屉，之后仍可继续改写，按 Esc、点遮罩或点右上角 <code>×</code> 也能关闭。当前输入与某个预设完全一致时，卡片会标注「已填入」。参考参数（整体强度与各滑块的建议区间）只是建议：后端会在系统提示里说明它不是强制规范，AI 按画面实际判断，但也不会整段忽略。抽屉右上角的<strong>「新建预设」</strong>可以就地写一个自己的方向（名称 / 分类 / 一句话描述 / 提示词 / <strong>参数参考</strong>：一行一个参数，参数名 + 建议区间，整块可留空；提示词默认用当前创作说明预填）。填了参数参考就保存成 <code>text</code> + <code>params_hint</code> 对象，留空则仍是一段纯文本字符串；参数名与建议怎么写见第 08 节的「参数参考」小节（表单里也放了一处直达链接）。保存后立刻写进项目根目录的 <code>color_presets.json</code> 并排到列表末尾；每张卡片右下角的「删除」需要两步确认。这个 JSON 也可以用文本编辑器直接改（<code>id</code> 可省略、<code>created_at</code> 由网页新建时自动写入），改完刷新网页即可生效。</li>
             <li><strong>生成调色方案</strong>：网页会把「允许大模型调整的参数集合」一起发给后端，模型以资深调色师的工作流作答（先读图诊断 → 先修影调与白平衡 → 再塑形与配色 → 最后细节与效果，且本插件只有全局滑块，不会承诺蒙版或局部调整），并按「基础滑块 + 按 LrC 面板分组的触发条件」返回一段中文说明 + Develop 参数（按需要 3–12 项，允许集合较小时该区间会自动收窄；默认允许集合为除实验参数与蒙版（效果面板的裁剪后暗角五项，默认关闭）外的全部 83 项，涵盖数值、枚举、开关与点曲线）。模型若给出未允许的参数名，或超出范围／枚举取值、类型不对的参数，后端会先把溢出清单连同原答案回传给模型，要求它在范围内重新作答（默认最多 2 轮）：修好的参数正常采用，仍未通过校验的参数会被丢弃并在面板上给出黄色提示，因此写进 LrC 的值一定在范围内；若所有参数都越界，网页会直接报错并建议重新生成（详见第 09 节）。<strong>暗角还多一层「伪蒙版」护栏</strong>：裁剪后暗角若会被画成画面上的一圈硬边圆形（圆度为正 + 羽化过低 + 数量拉满），同样会被打回重答，模型坚持不改时按安全窗口收敛（数量 ±60、羽化 ≥ 25、圆度 ≤ 25、中点 20–80、样式不用「绘制叠加」），每条改动会列在提示条的「已按防伪蒙版规则收敛」里；蒙版默认关闭，只有先在「参数微调」最上方的蒙版开关条里打开，暗角参数才会参与本次请求；网页手动拖动、插件与 MCP 不受这条限制。</li>
             <li><strong>检查并微调</strong>：「参数微调」标题下方是<strong>蒙版开关条</strong>——左侧总开关默认关闭（关闭时 AI 不会给出暗角参数，已加入的暗角值也会被移除），右侧 <code>关闭 / 轻 / 中 / 强</code> 按钮可一键把裁剪后暗角设为 -15 / -30 / -50（同时写入羽化 60、圆度 0、中点 50、样式 1，不会画出圆形硬边），之后仍可手动微调。右侧列出本次要写入 LrC 的全部参数，数值为滑块、枚举为下拉、开关为勾选框、点曲线为 <code>x,y;x,y</code> 文本框；每个参数右侧的 <code>×</code> 可把它从本次渲染中移除。步进由参数决定（曝光 0.05、色温 50、锐化半径 0.1，其余为 1）。往下是「全部 LrC 调色参数」面板，按 LrC 面板分区列出全部 107 项：<strong>左侧开关 = 是否允许大模型调整该参数</strong>（默认除实验参数与蒙版外全部允许），关掉某个开关时该参数也会退出本次渲染；<strong>行末 <code>＋</code> = 以当前值把参数加入本次渲染</strong>，加入后可直接拖动或下拉改值，再按 <code>×</code> 移除。</li>
             <li><strong>应用到 LrC 并预览</strong>：插件切到 Develop 模块、写入参数，再用 LrExportSession 渲染 2560px JPEG 回传网页；预览区会多出「原图 / LrC 渲染」切换。</li>
@@ -564,7 +582,7 @@ npm --prefix frontend run dev</code></pre>
     <footer class="footer">
       aiLr 智能调色工作台 · 使用指南对应插件 Bridge 版本 2026.09.28.1。本软件仅供学习开发使用，请勿据此做商业承诺性交付。
       <br>
-      Copyright 2026 <a href="">qincnd</a> All Rights Reserved
+      Copyright 2026 <a href="https://github.com/qincnd">qincnd</a> All Rights Reserved
     </footer>
   </body>
 </html>

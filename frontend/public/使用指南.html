@@ -190,6 +190,7 @@
             <tbody>
               <tr><td><code>scripts\init.ps1</code> / 双击 <code>init.bat</code></td><td>创建 <code>.venv</code>、安装后端与前端依赖、生成 <code>.env</code>、检查 Ollama 与默认模型</td></tr>
               <tr><td><code>scripts\start.ps1</code> / 双击 <code>start.bat</code></td><td>分别开窗口启动 FastAPI 与 Vite，健康检查通过后打开浏览器</td></tr>
+              <tr><td><code>scripts\test.ps1</code> / 双击 <code>test.bat</code></td><td>本地运行后端单元测试及前端 TypeScript / 生产构建检查</td></tr>
             </tbody>
           </table>
           <table>
@@ -205,6 +206,11 @@
             </tbody>
           </table>
           <p>脚本是幂等设计，重复运行不会破坏已有 <code>.venv</code>、<code>.env</code> 和 <code>node_modules</code>；端口 8000 / 5173 已被本机 aiLr 服务占用时直接复用，被其它程序占用时会明确报错。</p>
+          <h3>本地自动化测试</h3>
+          <p>依赖初始化后，在项目根目录运行完整验证；无需启动 Ollama、Lightroom Classic 或 aiLr 服务，也不会调用云端模型：</p>
+          <pre><code>powershell -ExecutionPolicy Bypass -File .\scripts\test.ps1
+# 也可以双击 test.bat</code></pre>
+          <p>脚本运行后端 <code>unittest</code> 测试和前端 TypeScript 检查 / Vite 生产构建；可用 <code>-BackendOnly</code> 或 <code>-FrontendOnly</code> 单独运行一端。也可直接运行后端测试：<code>.\.venv\Scripts\python.exe -m unittest discover -s backend/tests -v</code>。本地模拟测试不替代 Lightroom Classic 中的真实插件渲染验收。</p>
           <h3>手工命令（等价做法）</h3>
           <pre><code># 初始化
 py -3 -m venv .venv

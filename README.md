@@ -38,6 +38,7 @@
 | --- | --- |
 | `scripts\init.ps1`（或双击 `init.bat`） | 创建 `.venv`、安装后端和前端依赖、生成 `.env`、检查 Ollama 模型 |
 | `scripts\start.ps1`（或双击 `start.bat`） | 在独立窗口启动 FastAPI 与 Vite，健康检查通过后打开浏览器 |
+| `scripts\test.ps1`（或双击 `test.bat`） | 本地运行后端单元测试与前端 TypeScript / 生产构建检查 |
 
 ```powershell
 # 初始化：-Force 重建 .venv / 重置 .env，-RunTests 顺带跑单元测试，-SkipModelPull 不下载模型
@@ -211,12 +212,27 @@ LrC 的 Develop 参数会写入当前选中照片并产生可撤销的历史记�
 
 ## 测试
 
+初始化依赖后，在项目根目录运行完整本地验证：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\test.ps1
+# 或双击 test.bat
+```
+
+脚本会先运行 `backend/tests` 下的 Python `unittest`，再运行 `npm --prefix frontend run build`（TypeScript 项目检查与 Vite 生产构建）。任一环节失败，脚本会以非零退出码结束。也可以只验证一个部分：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\test.ps1 -BackendOnly
+powershell -ExecutionPolicy Bypass -File .\scripts\test.ps1 -FrontendOnly
+```
+
+后端测试可单独运行：
+
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s backend/tests -v
 ```
 
-测试不需要启动 Ollama 或 Lightroom Classic。
-也不需要连接大模型
+测试使用本地模拟响应，不需要启动 Ollama、Lightroom Classic 或应用服务，也不会调用云端模型；前端 build 会生成被 Git 忽略的 `frontend\dist\`。这些自动化检查不替代在 Lightroom Classic 宿主内进行的真实插件渲染验收。
 
 ## Lightroom Classic 集成边界
 

@@ -85,6 +85,61 @@ class RawImageProcessingTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
 
+    def test_preview_api_rejects_non_image_empty_and_oversized_uploads(self) -> None:
+        client = TestClient(app)
+
+        non_image = client.post(
+            "/api/images/preview",
+            files={"photo": ("notes.txt", b"not an image", "text/plain")},
+        )
+        empty = client.post(
+            "/api/images/preview",
+            files={"photo": ("empty.jpg", b"", "image/jpeg")},
+        )
+        with patch("app.main.settings.max_image_mb", 0):
+            oversized = client.post(
+                "/api/images/preview",
+                files={"photo": ("photo.jpg", b"image", "image/jpeg")},
+            )
+        with patch("app.main.settings.max_raw_image_mb", 0):
+            oversized_raw = client.post(
+                "/api/images/preview",
+                files={"photo": ("camera.dng", b"raw", "application/octet-stream")},
+            )
+
+        self.assertEqual(non_image.status_code, 415)
+        self.assertEqual(empty.status_code, 400)
+        self.assertEqual(oversized.status_code, 413)
+        self.assertEqual(oversized_raw.status_code, 413)
+
+    def test_suggestions_forward_reference_upload_to_the_model(self) -> None:
+        client = TestClient(app)
+        suggestion = {"summary": "Reference style", "settings": {"Exposure2012": 0.2}}
+        with (
+            patch("app.main.runtime.active", True),
+            patch(
+                "app.main.generate_suggestion",
+                new_callable=AsyncMock,
+                return_value=suggestion,
+            ) as generate,
+        ):
+            response = client.post(
+                "/api/suggestions",
+                data={"prompt": "Borrow the reference color"},
+                files={
+                    "photo": ("target.jpg", b"target-image", "image/jpeg"),
+                    "reference": ("reference.png", b"reference-image", "image/png"),
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        generate.assert_awaited_once()
+        call = generate.await_args
+        assert call is not None
+        self.assertEqual(call.args[:3], ("Borrow the reference color", b"target-image", "image/jpeg"))
+        self.assertEqual(call.kwargs["reference_image"], b"reference-image")
+        self.assertEqual(call.kwargs["reference_mime_type"], "image/png")
+
     def test_suggestions_send_converted_jpeg_to_the_model(self) -> None:
         client = TestClient(app)
         suggestion = {"summary": "RAW preview", "settings": {"Exposure2012": 0.2}}
